@@ -1,0 +1,16 @@
+# config.py
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    PAYOS_CLIENT_ID = os.getenv("PAYOS_CLIENT_ID")
+    PAYOS_API_KEY = os.getenv("PAYOS_API_KEY")
+    PAYOS_CHECKSUM_KEY = os.getenv("PAYOS_CHECKSUM_KEY")
+    PAYOS_CANCEL_URL = os.getenv("PAYOS_CANCEL_URL", "https://t.me/your_bot")
+    PAYOS_RETURN_URL = os.getenv("PAYOS_RETURN_URL", "https://t.me/your_bot")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app.onrender.com/webhook
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///shop.db")
+    ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
