@@ -42,10 +42,13 @@ def product_buttons(products, page=0, per_page=5):
             f"🛒 {p['name']} - {p['price']:,} VND (còn {p['stock']})",
             callback_data=f"buy_{p['id']}"
         )])
-    if len(products) == per_page:
-        keyboard.append([InlineKeyboardButton("⏭ Xem thêm", callback_data=f"page_{page+1}")])
+    nav = []
     if page > 0:
-        keyboard.append([InlineKeyboardButton("⏮ Trang trước", callback_data=f"page_{page-1}")])
+        nav.append(InlineKeyboardButton("⏮ Trước", callback_data=f"page_{page-1}"))
+    if len(products) == per_page:
+        nav.append(InlineKeyboardButton("⏭ Sau", callback_data=f"page_{page+1}"))
+    if nav:
+        keyboard.append(nav)
     keyboard.append([InlineKeyboardButton("📦 Đơn hàng chờ", callback_data="my_orders")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -111,9 +114,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Sản phẩm này đã hết hàng.", reply_markup=None)
         return
 
-    # order_code: số nguyên duy nhất (timestamp + product_id + user_id tail)
     order_code = int(f"{int(datetime.now().timestamp())}{product_id:03d}{query.from_user.id % 1000:03d}")
-
     create_order(order_code, query.from_user.id, product_id, 1, product["price"])
 
     desc = f"TK {product['name'][:15]}"
@@ -126,7 +127,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if payment_url:
         context.bot_data[f"order_{order_code}"] = {
-            "product_id": product_id,
+            "product_id":            reply_m product_id,
             "user_id": query.from_user.id
         }
         msg = (
@@ -137,9 +138,8 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Sau khi thanh toán, nhấn nút '✅ Đã thanh toán? Kiểm tra' bên dưới."
         )
         await query.edit_message_text(
-            msg,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=order_buttons(order_code),
+            msg, parse_mode=ParseMode.MARKDOWN,
+arkup=order_buttons(order_code),
             disable_web_page_preview=True
         )
     else:
@@ -169,7 +169,6 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Đơn hàng #{order_code} đã bị hủy.", reply_markup=None)
         return
 
-    # Gọi API PayOS
     data = get_payment_status(order_code)
     paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
 
@@ -253,30 +252,60 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HTTP HANDLERS
 # ============================================================
 async def root_handler(request: Request):
+    if request.method.upper() == "HEAD":
+        return Response(status=200)
     return Response(text="Bot is running", status=200)
 
 async def health_check(request: Request):
+    if request.method.upper() == "HEAD":
+        return Response(status=200)
     return Response(text="OK", status=200)
 
 async def telegram_webhook(request: Request):
-    """GET = verify, POST = update"""
-    if request.method == "GET":
+    """GET = verify, POST = update, HEAD = health"""
+    method = request.method.upper()
+    if method == "HEAD":
+        return Response(status=200)
+    if method == "GET":
         return Response(text="Telegram webhook OK", status=200)
+
     try:
-        data = await request.json()
+        raw = await request.read()
+        if not raw:
+            logger.warning("Telegram POST body rỗng")
+            return Response(status=400, text="Empty body")
+        data = json.loads(raw.decode("utf-8"))
         update = Update.de_json(data, request.app["bot_app"].bot)
         await request.app["bot_app"].process_update(update)
         return Response(text="OK", status=200)
     except Exception as e:
-        logger.error(f"Telegram webhook error: {e}")
+        logger.error(f"Telegram webhook error: {e}", exc_info=True)
         return Response(status=500, text="Error")
 
 async def payos_webhook(request: Request):
-    """PayOS gửi webhook - GET để test, POST để nhận dữ liệu."""
-    if request.method == "GET":
+    """
+    - HEAD: browser/PayOS verify URL → 200 rỗng
+    - GET:  test bằng trình duyệt → text
+    - POST: nhận webhook PayOS
+    """
+    method = request.method.upper()
+    if method == "HEAD":
+        return Response(status=200)
+    if method == "GET":
         return Response(text="PayOS webhook OK", status=200)
+
     try:
-        body = await request.json()
+        raw = await request.read()
+        if not raw:
+            logger.warning("PayOS POST body rỗng")
+            return Response(status=400, text="Empty body")
+
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError as e:
+            logger.error(f"PayOS body không phải JSON: {e}")
+            return Response(status=400, text="Invalid JSON")
+
         logger.info(f"PayOS webhook body: {json.dumps(body)[:500]}")
 
         sig_header = request.headers.get("x-payos-signature", "")
@@ -286,7 +315,7 @@ async def payos_webhook(request: Request):
 
         data = body.get("data", {})
         order_code = data.get("orderCode")
-        payos_code = data.get("code")  # "00" = success
+        payos_code = data.get("code")
 
         if payos_code == "00" and order_code:
             order = get_order(order_code)
@@ -307,14 +336,13 @@ async def payos_webhook(request: Request):
                     logger.warning(f"Hết key cho product {order['product_id']}")
         return Response(text="OK", status=200)
     except Exception as e:
-        logger.error(f"PayOS webhook error: {e}")
+        logger.error(f"PayOS webhook error: {e}", exc_info=True)
         return Response(status=500, text="Error")
 
 # ============================================================
 # MAIN
 # ============================================================
 async def main():
-    # --- Bot Application ---
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -328,24 +356,34 @@ async def main():
     await app.initialize()
     await app.start()
 
-    # Set webhook Telegram
     if Config.WEBHOOK_URL:
         webhook_url = f"{Config.WEBHOOK_URL}/telegram"
         await app.bot.set_webhook(webhook_url)
         logger.info(f"Telegram webhook set to: {webhook_url}")
     else:
-        logger.warning("WEBHOOK_URL chưa được cấu hình - Telegram sẽ không nhận update!")
+        logger.warning("WEBHOOK_URL chưa cấu hình — Telegram sẽ không nhận update!")
 
     # --- aiohttp Web Server ---
     web_app = web.Application()
     web_app["bot_app"] = app
 
+    # Root
     web_app.router.add_get("/", root_handler)
+    web_app.router.add_head("/", root_handler)
+
+    # Health
     web_app.router.add_get("/health", health_check)
+    web_app.router.add_head("/health", health_check)
+
+    # Telegram - GET/POST/HEAD
     web_app.router.add_get("/telegram", telegram_webhook)
     web_app.router.add_post("/telegram", telegram_webhook)
+    web_app.router.add_head("/telegram", telegram_webhook)
+
+    # PayOS - GET/POST/HEAD
     web_app.router.add_get("/payos", payos_webhook)
     web_app.router.add_post("/payos", payos_webhook)
+    web_app.router.add_head("/payos", payos_webhook)
 
     runner = web.AppRunner(web_app)
     await runner.setup()
@@ -355,7 +393,6 @@ async def main():
     await site.start()
     logger.info(f"Webhook server started on port {port}")
 
-    # Chạy vĩnh viễn
     try:
         await asyncio.Event().wait()
     except (KeyboardInterrupt, SystemExit):
