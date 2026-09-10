@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
+
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
+    """Tạo link thanh toán PayOS. Trả về (payment_url, order_code) hoặc (None, error_msg)."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY,
@@ -29,6 +31,7 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         "expiredAt": int(time.time()) + 3600 * 24,
     }
 
+    # Chữ ký tạo link theo tài liệu PayOS: 5 trường dưới, sort alphabet, nối bằng &
     signature_data = {
         "amount": payload["amount"],
         "cancelUrl": payload["cancelUrl"],
@@ -49,7 +52,7 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
             headers=headers, json=payload, timeout=10
         )
         data = resp.json()
-        logger.info(f"PayOS create link response: {json.dumps(data)[:400]}")
+        logger.info(f"PayOS create link response: {json.dumps(data, ensure_ascii=False)[:400]}")
         if data.get("code") == "00":
             return data["data"]["checkoutUrl"], order_code
         return None, data.get("desc", "Lỗi PayOS không xác định")
@@ -57,28 +60,52 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         logger.error(f"create_payment_link error: {e}")
         return None, str(e)
 
+
 def verify_payment_webhook(webhook_body, signature_header=None):
+    """
+    Xác thực webhook PayOS v2 với 4 biến thể encoding.
+    Thử lần lượt:
+      1. sort_keys=True,  ensure_ascii=False  (Unicode gốc)
+      2. sort_keys=True,  ensure_ascii=True   (escape \\uXXXX)
+      3. sort_keys=False, ensure_ascii=False  (giữ thứ tự gốc)
+      4. sort_keys=False, ensure_ascii=True
+    Trả về True nếu bất kỳ variant nào khớp.
+    """
     try:
         data = webhook_body.get("data", {})
-        signature = webhook_body.get("signature") or signature_header or ""
+        signature = (webhook_body.get("signature") or signature_header or "").strip()
         if not data or not signature:
             logger.warning("verify_payment_webhook: thiếu data hoặc signature")
             return False
 
-        data_str = json.dumps(data, separators=(",", ":"), sort_keys=True)
-        expected = hmac.new(
-            Config.PAYOS_CHECKSUM_KEY.encode("utf-8"),
-            data_str.encode("utf-8"),
-            hashlib.sha256
-        ).hexdigest()
+        key_bytes = Config.PAYOS_CHECKSUM_KEY.encode("utf-8")
 
-        logger.info(f"PayOS sig expected={expected[:16]}... got={signature[:16]}...")
-        return hmac.compare_digest(expected, signature)
-    except Exception as e:
-        logger.error(f"verify_payment_webhook error: {e}")
+        variants = [
+            ("sort+unicode", json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False)),
+            ("sort+ascii",   json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=True)),
+            ("nosort+unicode", json.dumps(data, separators=(",", ":"), ensure_ascii=False)),
+            ("nosort+ascii",   json.dumps(data, separators=(",", ":"), ensure_ascii=True)),
+        ]
+
+        for name, data_str in variants:
+            expected = hmac.new(key_bytes, data_str.encode("utf-8"), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, signature):
+                logger.info(f"PayOS signature MATCH via variant: {name}")
+                return True
+
+        logger.warning(f"PayOS signature MISMATCH. got={signature[:32]}...")
+        for name, s in variants:
+            exp = hmac.new(key_bytes, s.encode("utf-8"), hashlib.sha256).hexdigest()
+            logger.info(f"  {name}: expected={exp[:32]}... data_str[:150]={s[:150]}")
         return False
 
+    except Exception as e:
+        logger.error(f"verify_payment_webhook error: {e}", exc_info=True)
+        return False
+
+
 def get_payment_status(order_code):
+    """Gọi API PayOS để kiểm tra trạng thái đơn hàng."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY
