@@ -2,3 +2,5 @@ python-telegram-bot
 aiohttp
 requests
 python-dotenv
+pymongo[srv]
+dnspython
