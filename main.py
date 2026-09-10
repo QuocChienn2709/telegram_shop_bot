@@ -34,13 +34,12 @@ init_db()
 
 
 # ============================================================
-# SAFE HTML SENDER - tự động fallback khi tg-emoji lỗi
+# SAFE HTML SENDER
 # ============================================================
 _TG_EMOJI_RE = re.compile(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', re.DOTALL)
 
 
 def _strip_tg_emoji(text: str) -> str:
-    """Xoá tag <tg-emoji> giữ nội dung."""
     return _TG_EMOJI_RE.sub(r'\1', text)
 
 
@@ -50,27 +49,50 @@ def _is_entity_error(exc: Exception) -> bool:
 
 
 async def safe_reply(message, text, **kwargs):
-    """Reply HTML. Fallback strip tg-emoji nếu lỗi entity."""
     try:
         return await message.reply_text(text, parse_mode=ParseMode.HTML, **kwargs)
     except Exception as e:
         if _is_entity_error(e):
             logger.warning(f"safe_reply fallback: {e}")
-            clean = _strip_tg_emoji(text)
-            return await message.reply_text(clean, parse_mode=ParseMode.HTML, **kwargs)
+            return await message.reply_text(_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kwargs)
         raise
 
 
 async def safe_edit(query, text, **kwargs):
-    """Edit HTML. Fallback strip tg-emoji nếu lỗi entity."""
     try:
         return await query.edit_message_text(text, parse_mode=ParseMode.HTML, **kwargs)
     except Exception as e:
         if _is_entity_error(e):
             logger.warning(f"safe_edit fallback: {e}")
-            clean = _strip_tg_emoji(text)
-            return await query.edit_message_text(clean, parse_mode=ParseMode.HTML, **kwargs)
+            return await query.edit_message_text(_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kwargs)
         raise
+
+
+# ============================================================
+# KEY FORMATTER
+# ============================================================
+def format_key_display(key: str) -> str:
+    """
+    Format key hiển thị cho user:
+    - 'email|pass'  → 2 dòng (Tài khoản / Mật khẩu)
+    - 'email:pass'  → 2 dòng (fallback dấu ':')
+    - chuỗi khác    → giữ nguyên trong <code>
+    """
+    if not key:
+        return ""
+    if "|" in key:
+        account, _, password = key.partition("|")
+        return (
+            f"Tài khoản: <code>{html.escape(account.strip())}</code>\n"
+            f"Mật khẩu: <code>{html.escape(password.strip())}</code>"
+        )
+    if ":" in key:
+        account, _, password = key.partition(":")
+        return (
+            f"Tài khoản: <code>{html.escape(account.strip())}</code>\n"
+            f"Mật khẩu: <code>{html.escape(password.strip())}</code>"
+        )
+    return f"<code>{html.escape(key)}</code>"
 
 
 # ============================================================
@@ -136,7 +158,6 @@ def extract_custom_emoji_from_message(message):
     if not custom_emojis:
         return text, None
     emoji_id = custom_emojis[0].custom_emoji_id
-    # Validate chỉ nhận chuỗi số
     if not emoji_id or not emoji_id.isdigit():
         return text, None
     encoded = text.encode("utf-16-le")
@@ -309,7 +330,8 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if order["status"] == "paid":
         await safe_edit(
             query,
-            f"Đơn hàng #{order_code} đã thanh toán.\nKey: <code>{html.escape(order['key_assigned'] or '')}</code>"
+            f"Đơn hàng #{order_code} đã thanh toán.\n\n"
+            f"<b>Thông tin tài khoản:</b>\n{format_key_display(order['key_assigned'] or '')}"
         )
         return
     if order["status"] == "cancelled":
@@ -324,7 +346,8 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update_order_status(order_code, "paid", key)
             await safe_edit(
                 query,
-                f"Thanh toán thành công!\nKey: <code>{html.escape(key)}</code>"
+                f"Thanh toán thành công!\n\n"
+                f"<b>Thông tin tài khoản:</b>\n{format_key_display(key)}"
             )
         else:
             await safe_edit(query, "Đã thanh toán nhưng hết key. Liên hệ admin.", reply_markup=None)
@@ -375,17 +398,18 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         clean_text, emoji_id = extract_custom_emoji_from_message(update.message)
-        parts = clean_text.split()
+        # maxsplit=4 để giữ keys (có thể chứa | hoặc :) làm 1 phần duy nhất
+        parts = clean_text.split(maxsplit=4)
         if len(parts) < 4:
             await safe_reply(
                 update.message,
                 "<b>Cú pháp:</b>\n"
                 "<code>/add &lt;tên&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n"
                 "<code>/add &lt;tên&gt;|&lt;mô tả&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n\n"
-                "<b>Ví dụ có key:</b>\n"
-                "<code>/add CapCut 50000 3 CC001,CC002,CC003</code>\n\n"
-                "<b>Chưa có key:</b>\n"
-                "<code>/add CapCut 50000 10</code>"
+                "<b>Key tài khoản (email|pass):</b>\n"
+                "<code>/add Netflix 100000 2 user1@gmail.com|pass1,user2@gmail.com|pass2</code>\n\n"
+                "<b>Key thường:</b>\n"
+                "<code>/add CapCut 50000 3 CC001,CC002,CC003</code>"
             )
             return
         name_part = parts[1]
@@ -410,7 +434,11 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             int(keys_str); is_number = True
         except ValueError:
             pass
-        keys = [] if (keys_str in ("-", "") or is_number) else [k.strip() for k in keys_str.split(",") if k.strip()]
+
+        if keys_str in ("-", "") or is_number:
+            keys = []
+        else:
+            keys = [k.strip() for k in keys_str.split(",") if k.strip()]
 
         if keys:
             stock = len(keys)
@@ -427,17 +455,21 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         safe_name = html.escape(name)
         desc_info = f"\nMô tả: {html.escape(description)}" if description else ""
         emoji_info = (
-            f"\nEmoji ID: <code>{emoji_id}</code> (chỉ hiển thị được nếu bot có quyền)"
+            f"\nEmoji ID: <code>{emoji_id}</code> (chỉ hiển thị nếu bot có quyền)"
             if emoji_id else ""
         )
+        preview = ""
+        if keys:
+            preview = f"\n\n<b>Key mẫu:</b>\n{format_key_display(keys[0])}"
+
         await safe_reply(
             update.message,
             f"Đã thêm sản phẩm ID <code>{pid}</code>\n"
             f"Tên: {safe_name}{desc_info}\n"
             f"Giá: {price:,} VND\n"
             f"Số lượng: {stock}\n"
-            f"Keys: {len(keys)}{emoji_info}\n\n"
-            f"Nạp key: <code>/addkey {pid} &lt;key1,key2,...&gt;</code>"
+            f"Keys: {len(keys)}{emoji_info}{preview}\n\n"
+            f"Nạp thêm: <code>/addkey {pid} &lt;key1,key2,...&gt;</code>"
         )
     except Exception as e:
         logger.error(f"admin_add_product error: {e}", exc_info=True)
@@ -445,6 +477,12 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    File .txt format:
+      Tên|Mô tả|Giá|Key1,Key2
+      Tên|Giá|Key1,Key2
+    Key dạng email|pass KHÔNG dùng được trong file .txt vì | xung đột cột.
+    """
     if update.effective_user.id not in Config.ADMIN_IDS:
         await safe_reply(update.message, "Bạn không có quyền.")
         return
@@ -513,7 +551,12 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split(maxsplit=2)
         if len(parts) < 3:
-            await safe_reply(update.message, "Cú pháp: <code>/addkey &lt;id&gt; &lt;k1,k2,...&gt;</code>")
+            await safe_reply(
+                update.message,
+                "Cú pháp: <code>/addkey &lt;id&gt; &lt;key1,key2,...&gt;</code>\n\n"
+                "Key tài khoản:\n"
+                "<code>/addkey 1 user1@gmail.com|pass1,user2@gmail.com|pass2</code>"
+            )
             return
         product_id = int(parts[1])
         new_keys = [k.strip() for k in parts[2].split(",") if k.strip()]
@@ -529,10 +572,12 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"id": product_id},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
+        # Preview 1 key đầu
+        preview = f"\n\n<b>Key mẫu:</b>\n{format_key_display(new_keys[0])}"
         await safe_reply(
             update.message,
             f"Đã thêm <b>{len(new_keys)}</b> key vào <code>{product_id}</code>\n"
-            f"Tồn kho mới: {product['stock'] + len(new_keys)}"
+            f"Tồn kho mới: {product['stock'] + len(new_keys)}{preview}"
         )
     except Exception as e:
         await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
@@ -619,8 +664,8 @@ async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Emoji ID: <code>{product.get('emoji_id') or 'chưa đặt'}</code>\n\n"
             f"<b>Keys còn lại ({len(keys)}):</b>\n"
         )
-        for k in keys[:10]:
-            text += f"  <code>{html.escape(k)}</code>\n"
+        for i, k in enumerate(keys[:10], 1):
+            text += f"  {i}. {format_key_display(k)}\n"
         if len(keys) > 10:
             text += f"  <i>... và {len(keys) - 10} key khác</i>\n"
         await safe_reply(update.message, text)
@@ -759,6 +804,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Sản phẩm:</b>\n"
         "<code>/add Tên Giá SL Keys</code>\n"
         "<code>/add Tên|Mô tả Giá SL Keys</code>\n"
+        "Key tài khoản: <code>email|pass</code>\n"
         "Gửi file <b>.txt</b> để import\n"
         "<code>/list</code> - Xem tất cả\n"
         "<code>/detail &lt;id&gt;</code> - Chi tiết\n"
@@ -772,9 +818,10 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/setui &lt;key&gt; [emoji Premium]</code>\n"
         "<code>/viewui</code> - Xem bảng\n"
         "<code>/delui &lt;key&gt;</code> - Xóa\n\n"
-        "<b>File .txt format:</b>\n"
-        "<code>Tên|Mô tả|Giá|Key1,Key2</code>\n"
-        "<code>Tên|Giá|Key1,Key2</code>"
+        "<b>Key format:</b>\n"
+        "• Đơn giản: <code>CC001</code>\n"
+        "• Tài khoản: <code>user@gmail.com|password</code>\n"
+        "• Nhiều keys: cách bằng dấu <code>,</code>"
     )
     await safe_reply(update.message, text)
 
@@ -842,10 +889,9 @@ async def payos_webhook(request: Request):
                     update_order_status(order_code, "paid", key)
                     app = request.app["bot_app"]
                     try:
-                        # Tin nhắn đơn giản không tg-emoji, an toàn
                         await app.bot.send_message(
                             chat_id=order["user_id"],
-                            text=f"Thanh toán thành công!\nKey: <code>{html.escape(key)}</code>",
+                            text=f"Thanh toán thành công!\n\n<b>Thông tin tài khoản:</b>\n{format_key_display(key)}",
                             parse_mode=ParseMode.HTML
                         )
                     except Exception as e:
