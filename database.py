@@ -56,7 +56,7 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
 
-        # Migration
+        # Migration: thêm cột emoji_id nếu DB cũ
         cols = [row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()]
         if "emoji_id" not in cols:
             conn.execute("ALTER TABLE products ADD COLUMN emoji_id TEXT")
