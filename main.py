@@ -1,35 +1,29 @@
-# main.py (toàn bộ file, thay thế hoàn toàn)
-import asyncio
+# main.py - Webhook mode (thay thế toàn bộ file)
 import logging
 import json
-import time
 import requests
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode
 from aiohttp import web
 from aiohttp.web import Request, Response
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.constants import ParseMode
+import os
 
 from config import Config
 from database import (
     init_db, add_product, get_product, list_products,
     get_available_key, create_order, get_order, update_order_status,
-    get_pending_orders_by_user, update_stock
+    get_pending_orders_by_user
 )
 from payos_client import create_payment_link, verify_payment_webhook
 
-# --- Logging ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# --- Khởi tạo DB ---
 init_db()
 
-# --- Hàm hỗ trợ ---
+# --- Hàm hỗ trợ (giữ nguyên từ code cũ) ---
 def product_buttons(products, page=0, per_page=5):
     keyboard = []
     for p in products:
@@ -37,7 +31,6 @@ def product_buttons(products, page=0, per_page=5):
             f"🛒 {p['name']} - {p['price']:,} VND (còn {p['stock']})",
             callback_data=f"buy_{p['id']}"
         )])
-    # Nếu có đủ 5 sản phẩm và còn sản phẩm tiếp theo (kiểm tra bằng cách lấy thêm 1)
     if len(products) == per_page:
         keyboard.append([InlineKeyboardButton("⏭ Xem thêm", callback_data=f"page_{page+1}")])
     keyboard.append([InlineKeyboardButton("📦 Đơn hàng chờ", callback_data="my_orders")])
@@ -50,7 +43,7 @@ def order_buttons(order_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# --- Lệnh /start ---
+# --- Handlers (giữ nguyên logic từ code cũ) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     from database import get_db
@@ -59,7 +52,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
             (user.id, user.username, user.first_name, user.last_name)
         )
-    # Lấy 5 sản phẩm đầu tiên
     prods = list_products(limit=5, offset=0)
     await update.message.reply_text(
         "🏪 *Cửa hàng tài khoản Pro*\n\nChọn sản phẩm bên dưới:",
@@ -67,7 +59,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=product_buttons(prods, page=0)
     )
 
-# --- Danh sách sản phẩm (callback) ---
 async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -85,7 +76,6 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=product_buttons(products, page)
     )
 
-# --- Mua hàng ---
 async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -95,13 +85,9 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Sản phẩm này đã hết hàng.", reply_markup=None)
         return
 
-    # Tạo mã đơn hàng (số nguyên, duy nhất)
     order_code = int(f"{int(datetime.now().timestamp())}{product_id}{query.from_user.id % 1000}")
-
-    # Lưu order vào DB
     create_order(order_code, query.from_user.id, product_id, 1, product["price"])
 
-    # Tạo link thanh toán PayOS
     desc = f"TK {product['name'][:15]}"
     payment_url, error = create_payment_link(
         order_code=order_code,
@@ -131,7 +117,6 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text(f"❌ Lỗi tạo link thanh toán: {error}", reply_markup=None)
 
-# --- Kiểm tra thanh toán ---
 async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -151,7 +136,6 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Đơn hàng #{order_code} đã bị hủy.", reply_markup=None)
         return
 
-    # Gọi API PayOS kiểm tra trạng thái
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY
@@ -182,7 +166,6 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Check order error: {e}")
         await query.edit_message_text("⚠️ Lỗi kiểm tra, thử lại sau.", reply_markup=None)
 
-# --- Hủy đơn ---
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -197,7 +180,6 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_order_status(order_code, "cancelled")
     await query.edit_message_text(f"❌ Đã hủy đơn hàng #{order_code}.")
 
-# --- Xem đơn hàng chờ ---
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -214,7 +196,6 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "\nDùng nút 'Kiểm tra' ở từng đơn để cập nhật."
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
 
-# --- Admin: Thêm sản phẩm ---
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.message.reply_text("⛔ Bạn không có quyền.")
@@ -236,8 +217,22 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi: {e}")
 
-# --- Webhook server (aiohttp) ---
-async def webhook_handler(request: Request):
+# --- Webhook handler cho Telegram (nhận update từ Telegram) ---
+async def telegram_webhook(request: Request):
+    """Endpoint Telegram gửi update đến"""
+    try:
+        data = await request.json()
+        # Tạo Update object từ dữ liệu JSON
+        update = Update.de_json(data, request.app["bot_app"].bot)
+        # Xử lý update
+        await request.app["bot_app"].process_update(update)
+        return Response(text="OK")
+    except Exception as e:
+        logger.error(f"Telegram webhook error: {e}")
+        return Response(status=500, text="Error")
+
+# --- Webhook handler cho PayOS ---
+async def payos_webhook(request: Request):
     try:
         body = await request.json()
         signature = request.headers.get("x-payos-signature", "")
@@ -252,7 +247,6 @@ async def webhook_handler(request: Request):
                 key = get_available_key(order["product_id"])
                 if key:
                     update_order_status(order_code, "paid", key)
-                    # Gửi thông báo cho user (lấy từ app trong request)
                     app = request.app["bot_app"]
                     try:
                         await app.bot.send_message(
@@ -266,27 +260,19 @@ async def webhook_handler(request: Request):
                     logger.warning(f"Hết key cho product {order['product_id']}")
         return Response(text="OK")
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"PayOS webhook error: {e}")
         return Response(status=500, text="Error")
 
-async def start_webhook_server(app_bot):
-    """Khởi động webhook server trên cổng 8080"""
-    web_app = web.Application()
-    web_app["bot_app"] = app_bot
-    web_app.router.add_post("/webhook", webhook_handler)
-    runner = web.AppRunner(web_app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
-    await site.start()
-    logger.info("Webhook server started on port 8080")
-    return runner, site  # giữ tham chiếu để shutdown
+# --- Health check endpoint (cho Render) ---
+async def health_check(request: Request):
+    return Response(text="OK", status=200)
 
-# --- Hàm chính (FIXED) ---
+# --- Main: Chạy webhook server ---
 async def main():
-    # 1. Khởi tạo bot
+    # Khởi tạo bot application
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
-    # 2. Đăng ký handlers
+    # Đăng ký handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", admin_add_product))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern="^page_"))
@@ -295,24 +281,40 @@ async def main():
     app.add_handler(CallbackQueryHandler(cancel_order, pattern="^cancel_"))
     app.add_handler(CallbackQueryHandler(my_orders, pattern="^my_orders$"))
 
-    # 3. Khởi chạy webhook server (bất đồng bộ)
-    web_runner, web_site = await start_webhook_server(app)
+    # Khởi tạo app (quan trọng)
+    await app.initialize()
+    await app.start()
 
-    # 4. Chạy bot polling trong thread riêng (blocking, nhưng không làm treo event loop)
-    loop = asyncio.get_running_loop()
+    # Thiết lập webhook cho Telegram
+    webhook_url = f"{Config.WEBHOOK_URL}/telegram"
+    await app.bot.set_webhook(webhook_url)
+    logger.info(f"Telegram webhook set to: {webhook_url}")
 
-    def run_polling():
-        try:
-            app.run_polling()
-        except Exception as e:
-            logger.error(f"Polling stopped: {e}")
+    # Tạo web server (aiohttp)
+    web_app = web.Application()
+    web_app["bot_app"] = app
+    web_app.router.add_post("/telegram", telegram_webhook)
+    web_app.router.add_post("/payos", payos_webhook)
+    web_app.router.add_get("/health", health_check)
 
-    # Chạy polling trong executor (thread pool)
-    await loop.run_in_executor(None, run_polling)
+    runner = web.AppRunner(web_app)
+    await runner.setup()
 
-    # 5. Khi polling kết thúc (thường là khi bị dừng), dọn dẹp webhook
-    await web_runner.cleanup()
-    logger.info("Bot shutdown complete")
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"Webhook server started on port {port}")
+
+    # Giữ server chạy
+    try:
+        await asyncio.Event().wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await runner.cleanup()
+        await app.stop()
+        await app.shutdown()
 
 if __name__ == "__main__":
+    import asyncio
     asyncio.run(main())
