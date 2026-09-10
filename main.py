@@ -4,6 +4,7 @@ import html
 import json
 import logging
 import os
+import re
 from datetime import datetime
 
 from aiohttp import web
@@ -30,6 +31,46 @@ from payos_client import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 init_db()
+
+
+# ============================================================
+# SAFE HTML SENDER - tự động fallback khi tg-emoji lỗi
+# ============================================================
+_TG_EMOJI_RE = re.compile(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', re.DOTALL)
+
+
+def _strip_tg_emoji(text: str) -> str:
+    """Xoá tag <tg-emoji> giữ nội dung."""
+    return _TG_EMOJI_RE.sub(r'\1', text)
+
+
+def _is_entity_error(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return "entity_text_invalid" in s or "can't parse entities" in s or "entity" in s
+
+
+async def safe_reply(message, text, **kwargs):
+    """Reply HTML. Fallback strip tg-emoji nếu lỗi entity."""
+    try:
+        return await message.reply_text(text, parse_mode=ParseMode.HTML, **kwargs)
+    except Exception as e:
+        if _is_entity_error(e):
+            logger.warning(f"safe_reply fallback: {e}")
+            clean = _strip_tg_emoji(text)
+            return await message.reply_text(clean, parse_mode=ParseMode.HTML, **kwargs)
+        raise
+
+
+async def safe_edit(query, text, **kwargs):
+    """Edit HTML. Fallback strip tg-emoji nếu lỗi entity."""
+    try:
+        return await query.edit_message_text(text, parse_mode=ParseMode.HTML, **kwargs)
+    except Exception as e:
+        if _is_entity_error(e):
+            logger.warning(f"safe_edit fallback: {e}")
+            clean = _strip_tg_emoji(text)
+            return await query.edit_message_text(clean, parse_mode=ParseMode.HTML, **kwargs)
+        raise
 
 
 # ============================================================
@@ -95,6 +136,9 @@ def extract_custom_emoji_from_message(message):
     if not custom_emojis:
         return text, None
     emoji_id = custom_emojis[0].custom_emoji_id
+    # Validate chỉ nhận chuỗi số
+    if not emoji_id or not emoji_id.isdigit():
+        return text, None
     encoded = text.encode("utf-16-le")
     for e in sorted(custom_emojis, key=lambda x: x.offset, reverse=True):
         s, en = e.offset * 2, (e.offset + e.length) * 2
@@ -115,7 +159,7 @@ def product_name_html(name, emoji_id=None):
 def product_buttons(products, page=0, per_page=5):
     keyboard = []
     for p in products:
-        text = f"{p['name']} • {p['price']:,}đ • còn {p['stock']}"
+        text = f"{p['name']} - {p['price']:,}đ - còn {p['stock']}"
         kwargs = {"text": text, "callback_data": f"buy_{p['id']}"}
         if p.get("emoji_id"):
             kwargs["icon_custom_emoji_id"] = p["emoji_id"]
@@ -154,13 +198,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     register_user(user.id, user.username, user.first_name, user.last_name)
     prods = list_products(limit=5, offset=0)
     if not prods:
-        await update.message.reply_text("Cửa hàng hiện chưa có sản phẩm.")
+        await safe_reply(update.message, "Cửa hàng hiện chưa có sản phẩm.")
         return
     header = ui_emoji_html("shop")
     title = f"{header} <b>Cửa hàng tài khoản Pro</b>" if header else "<b>Cửa hàng tài khoản Pro</b>"
-    await update.message.reply_text(
+    await safe_reply(
+        update.message,
         f"{title}\n\nChọn sản phẩm bên dưới:",
-        parse_mode=ParseMode.HTML,
         reply_markup=product_buttons(prods, page=0)
     )
 
@@ -177,11 +221,11 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
             page = 0
     products = list_products(limit=5, offset=page * 5)
     if not products:
-        await query.edit_message_text("Không còn sản phẩm nào.", reply_markup=None)
+        await safe_edit(query, "Không còn sản phẩm nào.", reply_markup=None)
         return
-    await query.edit_message_text(
+    await safe_edit(
+        query,
         f"<b>Danh sách sản phẩm (trang {page + 1})</b>",
-        parse_mode=ParseMode.HTML,
         reply_markup=product_buttons(products, page)
     )
 
@@ -195,7 +239,7 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     product = get_product(product_id)
     if not product:
-        await query.edit_message_text("Không tìm thấy sản phẩm.")
+        await safe_edit(query, "Không tìm thấy sản phẩm.")
         return
     name_html = product_name_html(product["name"], product.get("emoji_id"))
     desc_html = html.escape(product.get("description") or "(không có mô tả)")
@@ -207,8 +251,7 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"<b>Đã bán:</b> {product['sold']}\n\n"
         f"<b>Mô tả:</b>\n{desc_html}"
     )
-    await query.edit_message_text(text, parse_mode=ParseMode.HTML,
-                                  reply_markup=detail_buttons(product_id))
+    await safe_edit(query, text, reply_markup=detail_buttons(product_id))
 
 
 async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -217,11 +260,11 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         product_id = int(query.data.split("_")[1])
     except (ValueError, IndexError):
-        await query.edit_message_text("Dữ liệu không hợp lệ.", reply_markup=None)
+        await safe_edit(query, "Dữ liệu không hợp lệ.", reply_markup=None)
         return
     product = get_product(product_id)
     if not product or product["stock"] <= 0:
-        await query.edit_message_text("Sản phẩm đã hết hàng.", reply_markup=None)
+        await safe_edit(query, "Sản phẩm đã hết hàng.", reply_markup=None)
         return
 
     order_code = int(f"{int(datetime.now().timestamp())}{product_id:03d}{query.from_user.id % 1000:03d}")
@@ -243,12 +286,12 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f'<a href="{payment_url}">Nhấn để thanh toán</a>\n\n'
             f"Sau khi thanh toán, nhấn 'Đã thanh toán? Kiểm tra' bên dưới."
         )
-        await query.edit_message_text(msg, parse_mode=ParseMode.HTML,
-                                      reply_markup=order_buttons(order_code),
-                                      disable_web_page_preview=True)
+        await safe_edit(query, msg,
+                        reply_markup=order_buttons(order_code),
+                        disable_web_page_preview=True)
     else:
-        await query.edit_message_text(f"Lỗi tạo link thanh toán: {html.escape(str(error))}",
-                                      reply_markup=None)
+        await safe_edit(query, f"Lỗi tạo link thanh toán: {html.escape(str(error))}",
+                        reply_markup=None)
 
 
 async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -257,19 +300,20 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         order_code = int(query.data.split("_")[1])
     except (ValueError, IndexError):
-        await query.edit_message_text("Dữ liệu không hợp lệ.")
+        await safe_edit(query, "Dữ liệu không hợp lệ.")
         return
     order = get_order(order_code)
     if not order:
-        await query.edit_message_text("Không tìm thấy đơn hàng.", reply_markup=None)
+        await safe_edit(query, "Không tìm thấy đơn hàng.", reply_markup=None)
         return
     if order["status"] == "paid":
-        await query.edit_message_text(
-            f"Đơn hàng #{order_code} đã thanh toán.\nKey: <code>{html.escape(order['key_assigned'] or '')}</code>",
-            parse_mode=ParseMode.HTML)
+        await safe_edit(
+            query,
+            f"Đơn hàng #{order_code} đã thanh toán.\nKey: <code>{html.escape(order['key_assigned'] or '')}</code>"
+        )
         return
     if order["status"] == "cancelled":
-        await query.edit_message_text(f"Đơn hàng #{order_code} đã bị hủy.", reply_markup=None)
+        await safe_edit(query, f"Đơn hàng #{order_code} đã bị hủy.", reply_markup=None)
         return
 
     data = get_payment_status(order_code)
@@ -278,15 +322,18 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = get_available_key(order["product_id"])
         if key:
             update_order_status(order_code, "paid", key)
-            await query.edit_message_text(
-                f"Thanh toán thành công!\nKey: <code>{html.escape(key)}</code>",
-                parse_mode=ParseMode.HTML)
+            await safe_edit(
+                query,
+                f"Thanh toán thành công!\nKey: <code>{html.escape(key)}</code>"
+            )
         else:
-            await query.edit_message_text("Đã thanh toán nhưng hết key. Liên hệ admin.", reply_markup=None)
+            await safe_edit(query, "Đã thanh toán nhưng hết key. Liên hệ admin.", reply_markup=None)
     else:
-        await query.edit_message_text(
+        await safe_edit(
+            query,
             f"Đơn hàng #{order_code} chưa được thanh toán.\nVui lòng thanh toán qua link hoặc hủy.",
-            reply_markup=order_buttons(order_code))
+            reply_markup=order_buttons(order_code)
+        )
 
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -298,10 +345,10 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     order = get_order(order_code)
     if not order or order["status"] != "pending":
-        await query.edit_message_text("Không thể hủy đơn hàng này.")
+        await safe_edit(query, "Không thể hủy đơn hàng này.")
         return
     update_order_status(order_code, "cancelled")
-    await query.edit_message_text(f"Đã hủy đơn hàng #{order_code}.")
+    await safe_edit(query, f"Đã hủy đơn hàng #{order_code}.")
 
 
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -309,14 +356,14 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     orders = get_pending_orders_by_user(query.from_user.id)
     if not orders:
-        await query.edit_message_text("Bạn không có đơn hàng nào đang chờ.")
+        await safe_edit(query, "Bạn không có đơn hàng nào đang chờ.")
         return
     text = "<b>Đơn hàng chờ thanh toán:</b>\n\n"
     for o in orders[:10]:
         prod = get_product(o["product_id"])
         name = product_name_html(prod["name"], prod.get("emoji_id")) if prod else "Không xác định"
         text += f"#{o['id']} - {name} - {o['amount']:,} VND\n"
-    await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+    await safe_edit(query, text)
 
 
 # ============================================================
@@ -324,21 +371,22 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         clean_text, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean_text.split()
         if len(parts) < 4:
-            await update.message.reply_text(
+            await safe_reply(
+                update.message,
                 "<b>Cú pháp:</b>\n"
                 "<code>/add &lt;tên&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n"
                 "<code>/add &lt;tên&gt;|&lt;mô tả&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n\n"
                 "<b>Ví dụ có key:</b>\n"
                 "<code>/add CapCut 50000 3 CC001,CC002,CC003</code>\n\n"
                 "<b>Chưa có key:</b>\n"
-                "<code>/add CapCut 50000 10</code>",
-                parse_mode=ParseMode.HTML)
+                "<code>/add CapCut 50000 10</code>"
+            )
             return
         name_part = parts[1]
         if "|" in name_part:
@@ -353,7 +401,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0: raise ValueError()
         except ValueError:
-            await update.message.reply_text(f"Giá không hợp lệ: <code>{html.escape(price_str)}</code>", parse_mode=ParseMode.HTML)
+            await safe_reply(update.message, f"Giá không hợp lệ: <code>{html.escape(price_str)}</code>")
             return
 
         keys_str = keys_str.strip()
@@ -371,34 +419,38 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 stock = int(stock_str.strip())
                 if stock < 0: raise ValueError()
             except ValueError:
-                await update.message.reply_text("Số lượng không hợp lệ.", parse_mode=ParseMode.HTML)
+                await safe_reply(update.message, "Số lượng không hợp lệ.")
                 return
             stock = 0
 
         pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
-        name_html = product_name_html(name, emoji_id)
+        safe_name = html.escape(name)
         desc_info = f"\nMô tả: {html.escape(description)}" if description else ""
-        emoji_info = f"\nEmoji ID: <code>{emoji_id}</code>" if emoji_id else ""
-        await update.message.reply_text(
+        emoji_info = (
+            f"\nEmoji ID: <code>{emoji_id}</code> (chỉ hiển thị được nếu bot có quyền)"
+            if emoji_id else ""
+        )
+        await safe_reply(
+            update.message,
             f"Đã thêm sản phẩm ID <code>{pid}</code>\n"
-            f"Tên: {name_html}{desc_info}\n"
+            f"Tên: {safe_name}{desc_info}\n"
             f"Giá: {price:,} VND\n"
             f"Số lượng: {stock}\n"
             f"Keys: {len(keys)}{emoji_info}\n\n"
-            f"Nạp key: <code>/addkey {pid} &lt;key1,key2,...&gt;</code>",
-            parse_mode=ParseMode.HTML)
+            f"Nạp key: <code>/addkey {pid} &lt;key1,key2,...&gt;</code>"
+        )
     except Exception as e:
         logger.error(f"admin_add_product error: {e}", exc_info=True)
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     doc = update.message.document
     if not doc or not (doc.file_name or "").lower().endswith(".txt"):
-        await update.message.reply_text("Chỉ chấp nhận file .txt")
+        await safe_reply(update.message, "Chỉ chấp nhận file .txt")
         return
     try:
         tg_file = await doc.get_file()
@@ -408,7 +460,7 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
         except UnicodeDecodeError:
             content = raw.decode("utf-8-sig", errors="ignore")
     except Exception as e:
-        await update.message.reply_text(f"Không đọc được file: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Không đọc được file: {html.escape(str(e))}")
         return
 
     success, failed = [], []
@@ -451,112 +503,108 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
         report += "\n<b>Lỗi:</b>\n"
         for line_no, err in failed[:10]:
             report += f"Dòng {line_no}: {html.escape(err)}\n"
-    await update.message.reply_text(report, parse_mode=ParseMode.HTML)
+    await safe_reply(update.message, report)
 
 
 async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         parts = update.message.text.split(maxsplit=2)
         if len(parts) < 3:
-            await update.message.reply_text(
-                "Cú pháp: <code>/addkey &lt;id&gt; &lt;k1,k2,...&gt;</code>",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(update.message, "Cú pháp: <code>/addkey &lt;id&gt; &lt;k1,k2,...&gt;</code>")
             return
         product_id = int(parts[1])
         new_keys = [k.strip() for k in parts[2].split(",") if k.strip()]
         if not new_keys:
-            await update.message.reply_text("Cần ít nhất 1 key.")
+            await safe_reply(update.message, "Cần ít nhất 1 key.")
             return
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(f"Không tìm thấy SP <code>{product_id}</code>.")
+            await safe_reply(update.message, f"Không tìm thấy SP <code>{product_id}</code>.")
             return
         db = get_db()
         db.products.update_one(
             {"id": product_id},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
-        await update.message.reply_text(
+        await safe_reply(
+            update.message,
             f"Đã thêm <b>{len(new_keys)}</b> key vào <code>{product_id}</code>\n"
-            f"Tồn kho mới: {product['stock'] + len(new_keys)}",
-            parse_mode=ParseMode.HTML)
+            f"Tồn kho mới: {product['stock'] + len(new_keys)}"
+        )
     except Exception as e:
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         clean_text, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean_text.split()
         if len(parts) < 2:
-            await update.message.reply_text(
-                "Cú pháp: <code>/setemoji &lt;id&gt; [dán emoji Premium]</code>",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(update.message, "Cú pháp: <code>/setemoji &lt;id&gt; [dán emoji Premium]</code>")
             return
         product_id = int(parts[1])
         if not emoji_id:
-            await update.message.reply_text("Không tìm thấy custom emoji Premium.")
+            await safe_reply(update.message, "Không tìm thấy custom emoji Premium.")
             return
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(f"Không tìm thấy SP <code>{product_id}</code>.")
+            await safe_reply(update.message, f"Không tìm thấy SP <code>{product_id}</code>.")
             return
         db = get_db()
         db.products.update_one({"id": product_id}, {"$set": {"emoji_id": emoji_id}})
-        await update.message.reply_text(
-            f"Đã đặt emoji cho SP <code>{product_id}</code>.",
-            parse_mode=ParseMode.HTML)
+        await safe_reply(
+            update.message,
+            f"Đã đặt emoji cho SP <code>{product_id}</code>.\n"
+            f"Emoji ID: <code>{emoji_id}</code>"
+        )
     except Exception as e:
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_setdesc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         parts = update.message.text.split(maxsplit=2)
         if len(parts) < 3:
-            await update.message.reply_text(
-                "Cú pháp: <code>/setdesc &lt;id&gt; &lt;mô tả&gt;</code>",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(update.message, "Cú pháp: <code>/setdesc &lt;id&gt; &lt;mô tả&gt;</code>")
             return
         product_id = int(parts[1])
         new_desc = parts[2].strip()
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(f"Không tìm thấy SP <code>{product_id}</code>.")
+            await safe_reply(update.message, f"Không tìm thấy SP <code>{product_id}</code>.")
             return
         db = get_db()
         db.products.update_one({"id": product_id}, {"$set": {"description": new_desc}})
-        await update.message.reply_text(
-            f"Đã cập nhật mô tả SP <code>{product_id}</code>:\n\n{html.escape(new_desc)}",
-            parse_mode=ParseMode.HTML)
+        await safe_reply(
+            update.message,
+            f"Đã cập nhật mô tả SP <code>{product_id}</code>:\n\n{html.escape(new_desc)}"
+        )
     except Exception as e:
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         parts = update.message.text.split()
         if len(parts) < 2:
-            await update.message.reply_text(
-                "Cú pháp: <code>/detail &lt;id&gt;</code>",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(update.message, "Cú pháp: <code>/detail &lt;id&gt;</code>")
             return
         product_id = int(parts[1])
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(f"Không tìm thấy SP <code>{product_id}</code>.")
+            await safe_reply(update.message, f"Không tìm thấy SP <code>{product_id}</code>.")
             return
         name_html = product_name_html(product["name"], product.get("emoji_id"))
         desc = html.escape(product.get("description") or "(không có mô tả)")
@@ -575,63 +623,63 @@ async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"  <code>{html.escape(k)}</code>\n"
         if len(keys) > 10:
             text += f"  <i>... và {len(keys) - 10} key khác</i>\n"
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        await safe_reply(update.message, text)
     except Exception as e:
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     products = list_all_products()
     if not products:
-        await update.message.reply_text("Chưa có sản phẩm nào.")
+        await safe_reply(update.message, "Chưa có sản phẩm nào.")
         return
     text = "<b>Toàn bộ sản phẩm:</b>\n\n"
     for p in products:
         name_html = product_name_html(p["name"], p.get("emoji_id"))
-        text += f"<code>{p['id']}</code> • {name_html} • {p['price']:,}đ • kho: {p['stock']} • đã bán: {p['sold']}\n"
-    text += "\nChi tiết: <code>/detail &lt;id&gt;</code> • Xoá: <code>/del &lt;id&gt;</code>"
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        text += f"<code>{p['id']}</code> - {name_html} - {p['price']:,}đ - kho: {p['stock']} - đã bán: {p['sold']}\n"
+    text += "\nChi tiết: <code>/detail &lt;id&gt;</code> - Xoá: <code>/del &lt;id&gt;</code>"
+    await safe_reply(update.message, text)
 
 
 async def admin_delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         parts = update.message.text.split()
         if len(parts) < 2:
-            await update.message.reply_text(
-                "Cú pháp: <code>/del &lt;id&gt;</code>",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(
+                update.message,
+                "Cú pháp: <code>/del &lt;id&gt;</code>\nXóa tất cả: <code>/delall confirm</code>"
+            )
             return
         product_id = int(parts[1])
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(f"Không tìm thấy SP <code>{product_id}</code>.")
+            await safe_reply(update.message, f"Không tìm thấy SP <code>{product_id}</code>.")
             return
         if delete_product(product_id):
-            await update.message.reply_text(
-                f"Đã xóa SP <code>{product_id}</code> - {html.escape(product['name'])}",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(
+                update.message,
+                f"Đã xóa SP <code>{product_id}</code> - {html.escape(product['name'])}"
+            )
     except Exception as e:
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     parts = update.message.text.split()
     if len(parts) < 2 or parts[1].lower() != "confirm":
-        await update.message.reply_text(
-            "Xóa TẤT CẢ sản phẩm. Xác nhận: <code>/delall confirm</code>",
-            parse_mode=ParseMode.HTML)
+        await safe_reply(update.message, "Xóa TẤT CẢ sản phẩm. Xác nhận: <code>/delall confirm</code>")
         return
     count = delete_all_products()
-    await update.message.reply_text(f"Đã xóa <b>{count}</b> sản phẩm.", parse_mode=ParseMode.HTML)
+    await safe_reply(update.message, f"Đã xóa <b>{count}</b> sản phẩm.")
 
 
 # ============================================================
@@ -639,70 +687,70 @@ async def admin_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     try:
         clean_text, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean_text.split()
         if len(parts) < 2:
-            await update.message.reply_text(
+            await safe_reply(
+                update.message,
                 "<b>Cú pháp:</b> <code>/setui &lt;key&gt; [dán emoji Premium]</code>\n\n"
                 "<b>Danh sách key:</b>\n" +
-                "\n".join(f"• <code>{k}</code> — {v}" for k, v in UI_KEYS.items()) +
-                "\n\nXem bảng: <code>/viewui</code>",
-                parse_mode=ParseMode.HTML)
+                "\n".join(f"- <code>{k}</code> - {v}" for k, v in UI_KEYS.items()) +
+                "\n\nXem bảng: <code>/viewui</code>"
+            )
             return
         key = parts[1].lower()
         if key not in UI_KEYS:
-            await update.message.reply_text(
-                f"Key không hợp lệ: <code>{html.escape(key)}</code>\nDùng <code>/viewui</code> để xem danh sách.",
-                parse_mode=ParseMode.HTML)
+            await safe_reply(
+                update.message,
+                f"Key không hợp lệ: <code>{html.escape(key)}</code>\nDùng <code>/viewui</code> để xem danh sách."
+            )
             return
         if not emoji_id:
-            await update.message.reply_text("Không tìm thấy custom emoji Premium trong tin nhắn.")
+            await safe_reply(update.message, "Không tìm thấy custom emoji Premium trong tin nhắn.")
             return
         set_setting(f"ui_{key}", emoji_id)
-        await update.message.reply_text(
-            f"Đã đặt emoji cho <code>{key}</code>\nEmoji ID: <code>{emoji_id}</code>",
-            parse_mode=ParseMode.HTML)
+        await safe_reply(
+            update.message,
+            f"Đã đặt emoji cho <code>{key}</code>\nEmoji ID: <code>{emoji_id}</code>\n\n"
+            f"Lưu ý: emoji chỉ hiển thị nếu bot có quyền dùng."
+        )
     except Exception as e:
-        await update.message.reply_text(f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_viewui(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     settings = {s["key"]: s["emoji_id"] for s in get_all_settings()}
     text = "<b>Bảng UI emoji hiện tại:</b>\n\n"
     for k, desc in UI_KEYS.items():
         eid = settings.get(f"ui_{k}")
         if eid:
-            text += f'• <code>{k}</code> — {desc} — <tg-emoji emoji-id="{eid}">•</tg-emoji> (<code>{eid}</code>)\n'
+            text += f"- <code>{k}</code> - {desc} - <code>{eid}</code>\n"
         else:
-            text += f"• <code>{k}</code> — {desc} — <i>chưa đặt</i>\n"
+            text += f"- <code>{k}</code> - {desc} - <i>chưa đặt</i>\n"
     text += "\nĐặt: <code>/setui &lt;key&gt; [dán emoji]</code>\nXóa: <code>/delui &lt;key&gt;</code>"
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await safe_reply(update.message, text)
 
 
 async def admin_delui(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await update.message.reply_text("Bạn không có quyền.")
+        await safe_reply(update.message, "Bạn không có quyền.")
         return
     parts = update.message.text.split()
     if len(parts) < 2:
-        await update.message.reply_text(
-            "Cú pháp: <code>/delui &lt;key&gt;</code>",
-            parse_mode=ParseMode.HTML)
+        await safe_reply(update.message, "Cú pháp: <code>/delui &lt;key&gt;</code>")
         return
     key = parts[1].lower()
     if key not in UI_KEYS:
-        await update.message.reply_text(
-            f"Key không hợp lệ: <code>{html.escape(key)}</code>",
-            parse_mode=ParseMode.HTML)
+        await safe_reply(update.message, f"Key không hợp lệ: <code>{html.escape(key)}</code>")
         return
     delete_setting(f"ui_{key}")
-    await update.message.reply_text(f"Đã xóa emoji cho <code>{key}</code>.", parse_mode=ParseMode.HTML)
+    await safe_reply(update.message, f"Đã xóa emoji cho <code>{key}</code>.")
 
 
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -712,23 +760,23 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/add Tên Giá SL Keys</code>\n"
         "<code>/add Tên|Mô tả Giá SL Keys</code>\n"
         "Gửi file <b>.txt</b> để import\n"
-        "<code>/list</code> — Xem tất cả\n"
-        "<code>/detail &lt;id&gt;</code> — Chi tiết\n"
-        "<code>/del &lt;id&gt;</code> — Xóa 1\n"
-        "<code>/delall confirm</code> — Xóa hết\n\n"
+        "<code>/list</code> - Xem tất cả\n"
+        "<code>/detail &lt;id&gt;</code> - Chi tiết\n"
+        "<code>/del &lt;id&gt;</code> - Xóa 1\n"
+        "<code>/delall confirm</code> - Xóa hết\n\n"
         "<b>Cập nhật:</b>\n"
         "<code>/addkey &lt;id&gt; K1,K2</code>\n"
         "<code>/setdesc &lt;id&gt; Mô tả</code>\n"
         "<code>/setemoji &lt;id&gt; [emoji Premium]</code>\n\n"
         "<b>Custom UI:</b>\n"
         "<code>/setui &lt;key&gt; [emoji Premium]</code>\n"
-        "<code>/viewui</code> — Xem bảng\n"
-        "<code>/delui &lt;key&gt;</code> — Xóa\n\n"
+        "<code>/viewui</code> - Xem bảng\n"
+        "<code>/delui &lt;key&gt;</code> - Xóa\n\n"
         "<b>File .txt format:</b>\n"
         "<code>Tên|Mô tả|Giá|Key1,Key2</code>\n"
         "<code>Tên|Giá|Key1,Key2</code>"
     )
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    await safe_reply(update.message, text)
 
 
 # ============================================================
@@ -794,10 +842,12 @@ async def payos_webhook(request: Request):
                     update_order_status(order_code, "paid", key)
                     app = request.app["bot_app"]
                     try:
+                        # Tin nhắn đơn giản không tg-emoji, an toàn
                         await app.bot.send_message(
                             chat_id=order["user_id"],
                             text=f"Thanh toán thành công!\nKey: <code>{html.escape(key)}</code>",
-                            parse_mode=ParseMode.HTML)
+                            parse_mode=ParseMode.HTML
+                        )
                     except Exception as e:
                         logger.error(f"Gửi tin nhắn thất bại: {e}")
         return Response(text="OK", status=200)
