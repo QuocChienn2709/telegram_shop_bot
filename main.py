@@ -32,25 +32,29 @@ logger = logging.getLogger(__name__)
 
 init_db()
 
+
 # ============================================================
 # UI HELPERS
 # ============================================================
 def product_buttons(products, page=0, per_page=5):
     keyboard = []
     for p in products:
-        keyboard.append([InlineKeyboardButton(
-            f"🛒 {p['name']} - {p['price']:,} VND (còn {p['stock']})",
-            callback_data=f"buy_{p['id']}"
-        )])
+        keyboard.append([
+            InlineKeyboardButton(
+                f"🛒 {p['name']} - {p['price']:,} VND (còn {p['stock']})",
+                callback_data=f"buy_{p['id']}"
+            )
+        ])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⏮ Trước", callback_data=f"page_{page-1}"))
+        nav.append(InlineKeyboardButton("⏮ Trước", callback_data=f"page_{page - 1}"))
     if len(products) == per_page:
-        nav.append(InlineKeyboardButton("⏭ Sau", callback_data=f"page_{page+1}"))
+        nav.append(InlineKeyboardButton("⏭ Sau", callback_data=f"page_{page + 1}"))
     if nav:
         keyboard.append(nav)
     keyboard.append([InlineKeyboardButton("📦 Đơn hàng chờ", callback_data="my_orders")])
     return InlineKeyboardMarkup(keyboard)
+
 
 def order_buttons(order_id):
     keyboard = [
@@ -58,6 +62,7 @@ def order_buttons(order_id):
         [InlineKeyboardButton("❌ Hủy đơn", callback_data=f"cancel_{order_id}")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 # ============================================================
 # BOT HANDLERS
@@ -80,6 +85,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=product_buttons(prods, page=0)
     )
 
+
 async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -95,10 +101,11 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("Không còn sản phẩm nào.", reply_markup=None)
         return
     await query.edit_message_text(
-        f"📋 *Danh sách sản phẩm (trang {page+1}):*",
+        f"📋 *Danh sách sản phẩm (trang {page + 1}):*",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=product_buttons(products, page)
     )
+
 
 async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -114,7 +121,9 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Sản phẩm này đã hết hàng.", reply_markup=None)
         return
 
-    order_code = int(f"{int(datetime.now().timestamp())}{product_id:03d}{query.from_user.id % 1000:03d}")
+    order_code = int(
+        f"{int(datetime.now().timestamp())}{product_id:03d}{query.from_user.id % 1000:03d}"
+    )
     create_order(order_code, query.from_user.id, product_id, 1, product["price"])
 
     desc = f"TK {product['name'][:15]}"
@@ -127,7 +136,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if payment_url:
         context.bot_data[f"order_{order_code}"] = {
-            "product_id":            reply_m product_id,
+            "product_id": product_id,
             "user_id": query.from_user.id
         }
         msg = (
@@ -138,12 +147,17 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Sau khi thanh toán, nhấn nút '✅ Đã thanh toán? Kiểm tra' bên dưới."
         )
         await query.edit_message_text(
-            msg, parse_mode=ParseMode.MARKDOWN,
-arkup=order_buttons(order_code),
+            msg,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=order_buttons(order_code),
             disable_web_page_preview=True
         )
     else:
-        await query.edit_message_text(f"❌ Lỗi tạo link thanh toán: {error}", reply_markup=None)
+        await query.edit_message_text(
+            f"❌ Lỗi tạo link thanh toán: {error}",
+            reply_markup=None
+        )
+
 
 async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -166,11 +180,17 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     if order["status"] == "cancelled":
-        await query.edit_message_text(f"❌ Đơn hàng #{order_code} đã bị hủy.", reply_markup=None)
+        await query.edit_message_text(
+            f"❌ Đơn hàng #{order_code} đã bị hủy.", reply_markup=None
+        )
         return
 
     data = get_payment_status(order_code)
-    paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
+    paid = bool(
+        data
+        and data.get("code") == "00"
+        and data.get("data", {}).get("status") == "PAID"
+    )
 
     if paid:
         key = get_available_key(order["product_id"])
@@ -192,6 +212,7 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=order_buttons(order_code)
         )
 
+
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -205,10 +226,13 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Không tìm thấy đơn hàng.")
         return
     if order["status"] != "pending":
-        await query.edit_message_text(f"Đơn hàng đã ở trạng thái {order['status']}, không thể hủy.")
+        await query.edit_message_text(
+            f"Đơn hàng đã ở trạng thái {order['status']}, không thể hủy."
+        )
         return
     update_order_status(order_code, "cancelled")
     await query.edit_message_text(f"❌ Đã hủy đơn hàng #{order_code}.")
+
 
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -224,6 +248,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"#{o['id']} - {name} - {o['amount']:,} VND\n"
     text += "\nDùng nút 'Kiểm tra' ở từng đơn để cập nhật."
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+
 
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -244,9 +269,12 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Cần ít nhất 1 key.")
             return
         pid = add_product(name, "", price, stock, keys)
-        await update.message.reply_text(f"✅ Đã thêm sản phẩm ID {pid} với {len(keys)} key.")
+        await update.message.reply_text(
+            f"✅ Đã thêm sản phẩm ID {pid} với {len(keys)} key."
+        )
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi: {e}")
+
 
 # ============================================================
 # HTTP HANDLERS
@@ -256,13 +284,15 @@ async def root_handler(request: Request):
         return Response(status=200)
     return Response(text="Bot is running", status=200)
 
+
 async def health_check(request: Request):
     if request.method.upper() == "HEAD":
         return Response(status=200)
     return Response(text="OK", status=200)
 
+
 async def telegram_webhook(request: Request):
-    """GET = verify, POST = update, HEAD = health"""
+    """HEAD/GET verify, POST update."""
     method = request.method.upper()
     if method == "HEAD":
         return Response(status=200)
@@ -282,12 +312,9 @@ async def telegram_webhook(request: Request):
         logger.error(f"Telegram webhook error: {e}", exc_info=True)
         return Response(status=500, text="Error")
 
+
 async def payos_webhook(request: Request):
-    """
-    - HEAD: browser/PayOS verify URL → 200 rỗng
-    - GET:  test bằng trình duyệt → text
-    - POST: nhận webhook PayOS
-    """
+    """HEAD verify, GET test, POST xử lý webhook."""
     method = request.method.upper()
     if method == "HEAD":
         return Response(status=200)
@@ -339,6 +366,7 @@ async def payos_webhook(request: Request):
         logger.error(f"PayOS webhook error: {e}", exc_info=True)
         return Response(status=500, text="Error")
 
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -367,20 +395,16 @@ async def main():
     web_app = web.Application()
     web_app["bot_app"] = app
 
-    # Root
     web_app.router.add_get("/", root_handler)
     web_app.router.add_head("/", root_handler)
 
-    # Health
     web_app.router.add_get("/health", health_check)
     web_app.router.add_head("/health", health_check)
 
-    # Telegram - GET/POST/HEAD
     web_app.router.add_get("/telegram", telegram_webhook)
     web_app.router.add_post("/telegram", telegram_webhook)
     web_app.router.add_head("/telegram", telegram_webhook)
 
-    # PayOS - GET/POST/HEAD
     web_app.router.add_get("/payos", payos_webhook)
     web_app.router.add_post("/payos", payos_webhook)
     web_app.router.add_head("/payos", payos_webhook)
@@ -402,6 +426,7 @@ async def main():
         await app.stop()
         await app.shutdown()
         logger.info("Bot shutdown complete")
+
 
 if __name__ == "__main__":
     try:
