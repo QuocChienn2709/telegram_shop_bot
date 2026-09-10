@@ -1,167 +1,252 @@
 # database.py
-import os
-import sqlite3
 import json
-from contextlib import contextmanager
+import logging
+from datetime import datetime
+from pymongo import MongoClient, ASCENDING, DESCENDING
+from pymongo.errors import DuplicateKeyError
 
-DB_PATH = os.environ.get("DB_PATH", "shop.db")
+from config import Config
 
-@contextmanager
+logger = logging.getLogger(__name__)
+
+_client = None
+_db = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=10000)
+        _client.admin.command("ping")
+        logger.info("MongoDB connected")
+    return _client
+
+
+def _get_db():
+    global _db
+    if _db is None:
+        _db = _get_client()[Config.MONGODB_DB]
+    return _db
+
+
 def get_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+    """Trả về database object (dùng cho các thao tác tùy chỉnh)."""
+    return _get_db()
+
 
 def init_db():
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                description TEXT,
-                price INTEGER NOT NULL,
-                stock INTEGER DEFAULT 0,
-                keys TEXT,
-                sold INTEGER DEFAULT 0,
-                emoji_id TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                product_id INTEGER NOT NULL,
-                quantity INTEGER DEFAULT 1,
-                amount INTEGER NOT NULL,
-                status TEXT DEFAULT 'pending',
-                key_assigned TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                paid_at TIMESTAMP
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
+    db = _get_db()
+    try:
+        db.products.create_index([("id", ASCENDING)], unique=True)
+        db.products.create_index([("stock", ASCENDING)])
+        db.orders.create_index([("order_code", ASCENDING)], unique=True)
+        db.orders.create_index([("user_id", ASCENDING)])
+        db.orders.create_index([("status", ASCENDING)])
+        db.users.create_index([("user_id", ASCENDING)], unique=True)
+        db.settings.create_index([("key", ASCENDING)], unique=True)
+        logger.info("MongoDB indexes created")
+    except Exception as e:
+        logger.error(f"init_db index error: {e}")
 
-        # Migration: thêm cột emoji_id nếu DB cũ
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()]
-        if "emoji_id" not in cols:
-            conn.execute("ALTER TABLE products ADD COLUMN emoji_id TEXT")
 
+def _next_id(name: str) -> int:
+    db = _get_db()
+    result = db.counters.find_one_and_update(
+        {"_id": name},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True
+    )
+    return result["seq"]
+
+
+# ============================================================
+# PRODUCTS
+# ============================================================
 def add_product(name, description, price, stock, keys_list, emoji_id=None):
-    with get_db() as conn:
-        cur = conn.execute(
-            "INSERT INTO products (name, description, price, stock, keys, emoji_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (name, description, price, stock, json.dumps(keys_list), emoji_id)
-        )
-        return cur.lastrowid
+    db = _get_db()
+    new_id = _next_id("products")
+    doc = {
+        "_id": new_id,
+        "id": new_id,
+        "name": name,
+        "description": description or "",
+        "price": int(price),
+        "stock": int(stock),
+        "keys": list(keys_list or []),
+        "sold": 0,
+        "emoji_id": emoji_id,
+        "created_at": datetime.utcnow(),
+    }
+    db.products.insert_one(doc)
+    return new_id
 
-def update_product(product_id, name=None, description=None, price=None, emoji_id=None):
-    fields, values = [], []
-    if name is not None:
-        fields.append("name = ?"); values.append(name)
-    if description is not None:
-        fields.append("description = ?"); values.append(description)
-    if price is not None:
-        fields.append("price = ?"); values.append(price)
-    if emoji_id is not None:
-        fields.append("emoji_id = ?"); values.append(emoji_id)
-    if not fields:
-        return False
-    values.append(product_id)
-    with get_db() as conn:
-        conn.execute(f"UPDATE products SET {', '.join(fields)} WHERE id = ?", values)
-    return True
 
 def delete_product(product_id):
-    with get_db() as conn:
-        cur = conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
-        return cur.rowcount > 0
+    db = _get_db()
+    result = db.products.delete_one({"id": int(product_id)})
+    return result.deleted_count > 0
+
 
 def delete_all_products():
-    with get_db() as conn:
-        cur = conn.execute("DELETE FROM products")
-        return cur.rowcount
+    db = _get_db()
+    result = db.products.delete_many({})
+    return result.deleted_count
+
 
 def get_product(product_id):
-    with get_db() as conn:
-        row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
-        return dict(row) if row else None
+    db = _get_db()
+    doc = db.products.find_one({"id": int(product_id)})
+    return _normalize_product(doc) if doc else None
+
 
 def list_products(limit=5, offset=0):
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, name, price, stock, sold, emoji_id FROM products WHERE stock > 0 ORDER BY id LIMIT ? OFFSET ?",
-            (limit, offset)
-        ).fetchall()
-        return [dict(r) for r in rows]
+    db = _get_db()
+    cursor = (
+        db.products.find(
+            {"stock": {"$gt": 0}},
+            {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1, "emoji_id": 1}
+        )
+        .sort("id", ASCENDING)
+        .skip(int(offset))
+        .limit(int(limit))
+    )
+    return [_normalize_product(d) for d in cursor]
+
 
 def list_all_products():
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, name, description, price, stock, sold, emoji_id FROM products ORDER BY id"
-        ).fetchall()
-        return [dict(r) for r in rows]
+    db = _get_db()
+    cursor = db.products.find({}).sort("id", ASCENDING)
+    return [_normalize_product(d) for d in cursor]
 
-def update_stock(product_id, new_stock):
-    with get_db() as conn:
-        conn.execute("UPDATE products SET stock = ? WHERE id = ?", (new_stock, product_id))
 
 def get_available_key(product_id):
-    with get_db() as conn:
-        row = conn.execute("SELECT keys FROM products WHERE id = ?", (product_id,)).fetchone()
-        if not row:
-            return None
-        keys = json.loads(row["keys"] or "[]")
-        if not keys:
-            return None
-        key = keys.pop(0)
-        conn.execute(
-            "UPDATE products SET keys = ?, stock = stock - 1, sold = sold + 1 WHERE id = ?",
-            (json.dumps(keys), product_id)
-        )
-        return key
+    """Lấy và pop key đầu tiên (atomic)."""
+    db = _get_db()
+    pid = int(product_id)
+    doc = db.products.find_one_and_update(
+        {"id": pid, "keys": {"$exists": True, "$ne": []}},
+        {"$pop": {"keys": -1}, "$inc": {"stock": -1, "sold": 1}},
+        return_document=False
+    )
+    if not doc:
+        return None
+    keys = doc.get("keys") or []
+    return keys[0] if keys else None
 
+
+def _normalize_product(doc):
+    if not doc:
+        return None
+    d = dict(doc)
+    d["keys"] = json.dumps(d.get("keys") or [])
+    if "_id" in d and "id" not in d:
+        d["id"] = d["_id"]
+    return d
+
+
+# ============================================================
+# ORDERS
+# ============================================================
 def create_order(order_id, user_id, product_id, quantity, amount):
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO orders (id, user_id, product_id, quantity, amount) VALUES (?, ?, ?, ?, ?)",
-            (order_id, user_id, product_id, quantity, amount)
-        )
-        conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    db = _get_db()
+    doc = {
+        "_id": int(order_id),
+        "order_code": int(order_id),
+        "user_id": int(user_id),
+        "product_id": int(product_id),
+        "quantity": int(quantity),
+        "amount": int(amount),
+        "status": "pending",
+        "key_assigned": None,
+        "created_at": datetime.utcnow(),
+        "paid_at": None,
+    }
+    try:
+        db.orders.insert_one(doc)
+    except DuplicateKeyError:
+        logger.warning(f"Order {order_id} đã tồn tại")
+    db.users.update_one(
+        {"user_id": int(user_id)},
+        {"$setOnInsert": {"user_id": int(user_id), "registered_at": datetime.utcnow()}},
+        upsert=True
+    )
+
 
 def get_order(order_id):
-    with get_db() as conn:
-        row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
-        return dict(row) if row else None
+    db = _get_db()
+    doc = db.orders.find_one({"order_code": int(order_id)})
+    return _normalize_order(doc) if doc else None
+
 
 def update_order_status(order_id, status, key_assigned=None):
-    with get_db() as conn:
-        if status == "paid" and key_assigned:
-            conn.execute(
-                "UPDATE orders SET status = ?, key_assigned = ?, paid_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (status, key_assigned, order_id)
-            )
-        else:
-            conn.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
+    db = _get_db()
+    update = {"$set": {"status": status}}
+    if status == "paid" and key_assigned is not None:
+        update["$set"]["key_assigned"] = key_assigned
+        update["$set"]["paid_at"] = datetime.utcnow()
+    db.orders.update_one({"order_code": int(order_id)}, update)
+
 
 def get_pending_orders_by_user(user_id):
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM orders WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC",
-            (user_id,)
-        ).fetchall()
-        return [dict(r) for r in rows]
+    db = _get_db()
+    cursor = (
+        db.orders.find({"user_id": int(user_id), "status": "pending"})
+        .sort("created_at", DESCENDING)
+    )
+    return [_normalize_order(d) for d in cursor]
+
+
+def _normalize_order(doc):
+    if not doc:
+        return None
+    d = dict(doc)
+    d["id"] = d.get("order_code") or d.get("_id")
+    return d
+
+
+# ============================================================
+# USERS
+# ============================================================
+def register_user(user_id, username=None, first_name=None, last_name=None):
+    db = _get_db()
+    db.users.update_one(
+        {"user_id": int(user_id)},
+        {
+            "$set": {
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+            },
+            "$setOnInsert": {"user_id": int(user_id), "registered_at": datetime.utcnow()},
+        },
+        upsert=True
+    )
+
+
+# ============================================================
+# SETTINGS (UI custom emoji)
+# ============================================================
+def get_setting(key):
+    db = _get_db()
+    doc = db.settings.find_one({"key": key})
+    return doc.get("emoji_id") if doc else None
+
+
+def set_setting(key, emoji_id):
+    db = _get_db()
+    db.settings.update_one(
+        {"key": key},
+        {"$set": {"emoji_id": emoji_id, "updated_at": datetime.utcnow()}},
+        upsert=True
+    )
+
+
+def delete_setting(key):
+    db = _get_db()
+    db.settings.delete_one({"key": key})
+
+
+def get_all_settings():
+    db = _get_db()
+    return list(db.settings.find({}, {"key": 1, "emoji_id": 1, "_id": 0}))
