@@ -11,9 +11,7 @@ logger = logging.getLogger(__name__)
 
 PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
-
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
-    """Tạo link thanh toán PayOS. Trả về (payment_url, order_code) hoặc (None, error_msg)."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY,
@@ -31,7 +29,6 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         "expiredAt": int(time.time()) + 3600 * 24,
     }
 
-    # Chữ ký tạo link theo tài liệu PayOS: 5 trường dưới, sort alphabet, nối bằng &
     signature_data = {
         "amount": payload["amount"],
         "cancelUrl": payload["cancelUrl"],
@@ -60,17 +57,8 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         logger.error(f"create_payment_link error: {e}")
         return None, str(e)
 
-
 def verify_payment_webhook(webhook_body, signature_header=None):
-    """
-    Xác thực webhook PayOS v2 với 4 biến thể encoding.
-    Thử lần lượt:
-      1. sort_keys=True,  ensure_ascii=False  (Unicode gốc)
-      2. sort_keys=True,  ensure_ascii=True   (escape \\uXXXX)
-      3. sort_keys=False, ensure_ascii=False  (giữ thứ tự gốc)
-      4. sort_keys=False, ensure_ascii=True
-    Trả về True nếu bất kỳ variant nào khớp.
-    """
+    """Thử 4 biến thể encoding JSON để tìm chữ ký khớp."""
     try:
         data = webhook_body.get("data", {})
         signature = (webhook_body.get("signature") or signature_header or "").strip()
@@ -81,10 +69,10 @@ def verify_payment_webhook(webhook_body, signature_header=None):
         key_bytes = Config.PAYOS_CHECKSUM_KEY.encode("utf-8")
 
         variants = [
-            ("sort+unicode", json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False)),
-            ("sort+ascii",   json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=True)),
-            ("nosort+unicode", json.dumps(data, separators=(",", ":"), ensure_ascii=False)),
-            ("nosort+ascii",   json.dumps(data, separators=(",", ":"), ensure_ascii=True)),
+            ("sort+unicode",   json.dumps(data, separators=(",", ":"), sort_keys=True,  ensure_ascii=False)),
+            ("sort+ascii",     json.dumps(data, separators=(",", ":"), sort_keys=True,  ensure_ascii=True)),
+            ("nosort+unicode", json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=False)),
+            ("nosort+ascii",   json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=True)),
         ]
 
         for name, data_str in variants:
@@ -98,14 +86,11 @@ def verify_payment_webhook(webhook_body, signature_header=None):
             exp = hmac.new(key_bytes, s.encode("utf-8"), hashlib.sha256).hexdigest()
             logger.info(f"  {name}: expected={exp[:32]}... data_str[:150]={s[:150]}")
         return False
-
     except Exception as e:
         logger.error(f"verify_payment_webhook error: {e}", exc_info=True)
         return False
 
-
 def get_payment_status(order_code):
-    """Gọi API PayOS để kiểm tra trạng thái đơn hàng."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY
