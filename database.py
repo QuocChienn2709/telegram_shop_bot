@@ -1,9 +1,10 @@
 # database.py
+import os
 import sqlite3
 import json
 from contextlib import contextmanager
 
-DB_PATH = "shop.db"
+DB_PATH = os.environ.get("DB_PATH", "shop.db")
 
 @contextmanager
 def get_db():
@@ -72,6 +73,14 @@ def list_products(limit=5, offset=0):
         rows = conn.execute(
             "SELECT id, name, price, stock, sold FROM products WHERE stock > 0 ORDER BY id LIMIT ? OFFSET ?",
             (limit, offset)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+def list_all_products():
+    """Dùng cho admin: liệt kê cả sản phẩm hết hàng."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, price, stock, sold FROM products ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
 
