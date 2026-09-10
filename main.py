@@ -292,7 +292,6 @@ async def health_check(request: Request):
 
 
 async def telegram_webhook(request: Request):
-    """aiohttp tự gọi handler này cho cả GET và HEAD (HEAD = GET không body)."""
     if request.method == "HEAD":
         return Response(status=200, content_type="text/plain")
     if request.method == "GET":
@@ -313,35 +312,48 @@ async def telegram_webhook(request: Request):
 
 
 async def payos_webhook(request: Request):
-    """aiohttp tự gọi handler này cho cả GET và HEAD."""
-    if request.method == "HEAD":
+    """
+    - HEAD / GET: verify URL → 200
+    - POST: nhận webhook, luôn trả 200 để tránh retry vô hạn
+    - Bỏ qua test webhook của PayOS (orderCode=123, description=VQRIO123)
+    """
+    method = request.method.upper()
+    if method == "HEAD":
         return Response(status=200, content_type="text/plain")
-    if request.method == "GET":
+    if method == "GET":
         return Response(text="PayOS webhook OK", status=200)
 
     try:
         raw = await request.read()
         if not raw:
             logger.warning("PayOS POST body rỗng")
-            return Response(status=400, text="Empty body")
+            return Response(status=200, text="OK")
 
         try:
             body = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError as e:
             logger.error(f"PayOS body không phải JSON: {e}")
-            return Response(status=400, text="Invalid JSON")
+            return Response(status=200, text="OK")
 
-        logger.info(f"PayOS webhook body: {json.dumps(body)[:500]}")
-
-        sig_header = request.headers.get("x-payos-signature", "")
-        if not verify_payment_webhook(body, sig_header):
-            logger.warning("PayOS signature invalid")
-            return Response(status=403, text="Invalid signature")
+        logger.info(f"PayOS webhook body: {json.dumps(body, ensure_ascii=False)[:800]}")
 
         data = body.get("data", {})
         order_code = data.get("orderCode")
         payos_code = data.get("code")
+        description = data.get("description", "")
 
+        # --- BƯỚC 1: Bỏ qua test webhook của PayOS Dashboard ---
+        if order_code == 123 or description == "VQRIO123":
+            logger.info("PayOS TEST webhook detected → skip verify, trả 200")
+            return Response(text="OK", status=200)
+
+        # --- BƯỚC 2: Xác thực chữ ký ---
+        sig_header = request.headers.get("x-payos-signature", "")
+        if not verify_payment_webhook(body, sig_header):
+            logger.warning("PayOS signature invalid — bỏ qua, trả 200")
+            return Response(status=200, text="OK")
+
+        # --- BƯỚC 3: Xử lý đơn hàng ---
         if payos_code == "00" and order_code:
             order = get_order(order_code)
             if order and order["status"] == "pending":
@@ -359,10 +371,12 @@ async def payos_webhook(request: Request):
                         logger.error(f"Gửi tin nhắn thất bại: {e}")
                 else:
                     logger.warning(f"Hết key cho product {order['product_id']}")
+
         return Response(text="OK", status=200)
+
     except Exception as e:
         logger.error(f"PayOS webhook error: {e}", exc_info=True)
-        return Response(status=500, text="Error")
+        return Response(status=200, text="OK")
 
 
 # ============================================================
@@ -389,8 +403,7 @@ async def main():
     else:
         logger.warning("WEBHOOK_URL chưa cấu hình — Telegram sẽ không nhận update!")
 
-    # --- aiohttp Web Server ---
-    # LƯU Ý: KHÔNG gọi add_head vì aiohttp tự động thêm HEAD khi có add_get
+    # KHÔNG gọi add_head — aiohttp tự thêm HEAD khi có add_get
     web_app = web.Application()
     web_app["bot_app"] = app
 
