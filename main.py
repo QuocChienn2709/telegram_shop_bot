@@ -50,6 +50,7 @@ def extract_custom_emoji_from_message(message):
 
     emoji_id = custom_emojis[0].custom_emoji_id
 
+    # Xóa emoji khỏi text (từ cuối lên đầu để giữ offset UTF-16)
     encoded = text.encode("utf-16-le")
     for e in sorted(custom_emojis, key=lambda x: x.offset, reverse=True):
         s = e.offset * 2
@@ -61,9 +62,14 @@ def extract_custom_emoji_from_message(message):
 
 
 def render_name_html(name, emoji_id=None):
+    """
+    Render tên sản phẩm với Telegram Premium emoji.
+    Tag CHUẨN: <tg-emoji emoji-id="...">...</tg-emoji>
+    """
+    safe_name = html.escape(name)
     if emoji_id:
-        return f'<emoji id="{emoji_id}">🎁</emoji> {html.escape(name)}'
-    return html.escape(name)
+        return f'<tg-emoji emoji-id="{emoji_id}">🎁</tg-emoji> {safe_name}'
+    return safe_name
 
 
 def render_description_html(desc):
@@ -128,7 +134,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "🏪 <b>Cửa hàng tài khoản Pro</b>\n\n"
-        "Chọn sản phẩm bên dưới. Nhấn giữ để xem chi tiết:",
+        "Chọn sản phẩm bên dưới:",
         parse_mode=ParseMode.HTML,
         reply_markup=product_buttons(prods, page=0)
     )
@@ -235,7 +241,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await query.edit_message_text(
-            f"❌ Lỗi tạo link thanh toán: {error}",
+            f"❌ Lỗi tạo link thanh toán: {html.escape(str(error))}",
             reply_markup=None
         )
 
@@ -256,7 +262,7 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if order["status"] == "paid":
         await query.edit_message_text(
-            f"✅ Đơn hàng #{order_code} đã thanh toán.\n🔑 Key: <code>{html.escape(order['key_assigned'])}</code>",
+            f"✅ Đơn hàng #{order_code} đã thanh toán.\n🔑 Key: <code>{html.escape(order['key_assigned'] or '')}</code>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -339,6 +345,10 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Cú pháp:
       /add <tên> <giá> <số_lượng> [keys]
       /add <tên>|<mô tả> <giá> <số_lượng> [keys]
+
+    Quy tắc parse:
+      - Nếu phần 5 là danh sách key (chứa dấu `,` hoặc chuỗi chữ) → dùng làm keys.
+      - Nếu phần 5 là số hoặc `-` hoặc rỗng → KHÔNG có key, tồn kho = 0.
     """
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.message.reply_text("⛔ Bạn không có quyền.")
@@ -354,9 +364,11 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Cú pháp:\n"
                 "<code>/add &lt;tên&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n"
                 "<code>/add &lt;tên&gt;|&lt;mô tả&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n\n"
-                "Ví dụ:\n"
-                "<code>/add CapCut 50000 3 CC001,CC002,CC003</code>\n"
-                "<code>/add CapCut|Chỉnh sửa video 50000 3 CC001,CC002</code>",
+                "<b>Ví dụ có key:</b>\n"
+                "<code>/add CapCut 50000 3 CC001,CC002,CC003</code>\n\n"
+                "<b>Ví dụ chưa có key (nạp sau):</b>\n"
+                "<code>/add CapCut 50000 10</code>\n"
+                "<code>/add CapCut 50000 10 -</code>",
                 parse_mode=ParseMode.HTML
             )
             return
@@ -365,11 +377,9 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name_part = parts[1]
         if "|" in name_part:
             name, description = name_part.split("|", 1)
-            name = name.strip()
-            description = description.strip()
+            name, description = name.strip(), description.strip()
         else:
-            name = name_part.strip()
-            description = ""
+            name, description = name_part.strip(), ""
 
         price_str = parts[2]
         stock_str = parts[3]
@@ -387,11 +397,23 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Keys
-        keys = []
-        if keys_str.strip() and keys_str.strip() != "-":
+        # --- Xác định keys ---
+        keys_str = keys_str.strip()
+
+        # Nếu keys_str là số hoặc "-" hoặc rỗng → không có key
+        is_number = False
+        try:
+            int(keys_str)
+            is_number = True
+        except ValueError:
+            pass
+
+        if keys_str in ("-", "") or is_number:
+            keys = []
+        else:
             keys = [k.strip() for k in keys_str.split(",") if k.strip()]
 
+        # --- Xác định stock ---
         if keys:
             stock = len(keys)
         else:
@@ -405,14 +427,14 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode=ParseMode.HTML
                 )
                 return
-            if stock > 0:
-                stock = 0
+            # Không có key → tồn kho = 0 (chờ nạp key)
+            stock = 0
 
         pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
 
         name_html = render_name_html(name, emoji_id)
-        emoji_info = f"\n• Emoji ID: <code>{emoji_id}</code>" if emoji_id else ""
         desc_info = f"\n• Mô tả: {html.escape(description)}" if description else ""
+        emoji_info = f"\n• Emoji ID: <code>{emoji_id}</code>" if emoji_id else ""
 
         await update.message.reply_text(
             f"✅ <b>Đã thêm sản phẩm ID</b> <code>{pid}</code>\n"
@@ -420,6 +442,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Giá: {price:,} VND\n"
             f"• Số lượng: {stock}\n"
             f"• Keys: {len(keys)}{emoji_info}\n\n"
+            f"Nạp key bằng: <code>/addkey {pid} &lt;key1,key2,...&gt;</code>\n"
             f"Xem chi tiết: <code>/detail {pid}</code>",
             parse_mode=ParseMode.HTML
         )
@@ -431,9 +454,9 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Import sản phẩm từ file .txt đính kèm.
-    Format mỗi dòng:
+    Format:
       Tên|Mô tả|Giá|Key1,Key2,Key3
-      Tên|Giá|Key1,Key2,Key3         (không mô tả, 3 phần)
+      Tên|Giá|Key1,Key2,Key3        (không mô tả)
       Tên|Mô tả|Giá|                 (không key)
     Dòng bắt đầu bằng # là comment.
     """
@@ -453,14 +476,15 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         tg_file = await doc.get_file()
         raw = await tg_file.download_as_bytearray()
-        content = raw.decode("utf-8")
-    except UnicodeDecodeError:
         try:
-            content = raw.decode("utf-8-sig")  # có BOM
-        except Exception:
-            content = raw.decode("latin-1")
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                content = raw.decode("utf-8-sig")
+            except Exception:
+                content = raw.decode("latin-1")
     except Exception as e:
-        await update.message.reply_text(f"❌ Không đọc được file: {e}")
+        await update.message.reply_text(f"❌ Không đọc được file: {html.escape(str(e))}")
         return
 
     success, failed = [], []
@@ -476,18 +500,10 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
                 failed.append((line_no, line, "cần ≥ 3 phần"))
                 continue
 
-            # Xử lý 3 hoặc 4 phần
             if len(parts) == 3:
-                # Tên|Giá|Keys
-                name = parts[0]
-                description = ""
-                price_str = parts[1]
-                keys_str = parts[2]
+                name, description, price_str, keys_str = parts[0], "", parts[1], parts[2]
             else:
-                # Tên|Mô tả|Giá|Keys
-                name = parts[0]
-                description = parts[1]
-                price_str = parts[2]
+                name, description, price_str = parts[0], parts[1], parts[2]
                 keys_str = parts[3] if len(parts) >= 4 else ""
 
             if not name:
@@ -513,7 +529,6 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             failed.append((line_no, line, str(e)))
 
-    # Báo cáo
     report = f"📥 <b>Import file:</b> <code>{html.escape(filename)}</code>\n\n"
     report += f"✅ Thành công: <b>{len(success)}</b>\n"
     report += f"❌ Thất bại: <b>{len(failed)}</b>\n\n"
@@ -606,9 +621,7 @@ async def admin_set_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_edit_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Cú pháp: /setdesc <product_id> <mô tả mới>
-    """
+    """Cú pháp: /setdesc <product_id> <mô tả mới>"""
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.message.reply_text("⛔ Bạn không có quyền.")
         return
@@ -693,7 +706,7 @@ async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"<code>{p['id']}</code> • {name_html} • {p['price']:,}đ • "
             f"kho: {p['stock']} • đã bán: {p['sold']}\n"
         )
-    text += "\nXem chi tiết: <code>/detail &lt;id&gt;</code>\nXóa: <code>/del &lt;id&gt;</code>"
+    text += "\nChi tiết: <code>/detail &lt;id&gt;</code> • Xoá: <code>/del &lt;id&gt;</code>"
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
@@ -752,7 +765,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Thêm sản phẩm:</b>\n"
         "• <code>/add Tên Giá SL Keys</code>\n"
         "• <code>/add Tên|Mô tả Giá SL Keys</code>\n"
-        "• Gửi file .txt để import hàng loạt\n\n"
+        "• <code>/add Tên Giá 10</code> (chưa có key, nạp sau)\n"
+        "• Gửi file <b>.txt</b> để import hàng loạt\n\n"
         "<b>Quản lý:</b>\n"
         "• <code>/list</code> - Xem tất cả\n"
         "• <code>/detail &lt;id&gt;</code> - Xem chi tiết\n"
@@ -760,8 +774,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <code>/delall confirm</code> - Xóa hết\n\n"
         "<b>Cập nhật:</b>\n"
         "• <code>/addkey &lt;id&gt; K1,K2</code> - Thêm key\n"
-        "• <code>/setdesc &lt;id&gt; Mô tả mới</code> - Sửa mô tả\n"
-        "• <code>/setemoji &lt;id&gt; 🎁</code> - Đặt emoji Premium\n\n"
+        "• <code>/setdesc &lt;id&gt; Mô tả</code> - Sửa mô tả\n"
+        "• <code>/setemoji &lt;id&gt; [dán emoji Premium]</code>\n\n"
         "<b>Format file .txt:</b>\n"
         "<code>Tên|Mô tả|Giá|Key1,Key2,Key3</code>\n"
         "<code>Tên|Giá|Key1,Key2</code>\n"
@@ -872,7 +886,7 @@ async def main():
     app.add_handler(CommandHandler("delall", admin_delete_all))
     app.add_handler(CommandHandler("help", admin_help))
 
-    # Import file .txt (chỉ admin, chỉ khi có caption trống hoặc dùng /import)
+    # Import file .txt (chỉ admin)
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products
