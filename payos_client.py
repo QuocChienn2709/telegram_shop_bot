@@ -58,33 +58,23 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         return None, str(e)
 
 def verify_payment_webhook(webhook_body, signature_header=None):
-    """Thử 4 biến thể encoding JSON để tìm chữ ký khớp."""
     try:
         data = webhook_body.get("data", {})
         signature = (webhook_body.get("signature") or signature_header or "").strip()
         if not data or not signature:
-            logger.warning("verify_payment_webhook: thiếu data hoặc signature")
             return False
-
         key_bytes = Config.PAYOS_CHECKSUM_KEY.encode("utf-8")
-
         variants = [
             ("sort+unicode",   json.dumps(data, separators=(",", ":"), sort_keys=True,  ensure_ascii=False)),
             ("sort+ascii",     json.dumps(data, separators=(",", ":"), sort_keys=True,  ensure_ascii=True)),
             ("nosort+unicode", json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=False)),
             ("nosort+ascii",   json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=True)),
         ]
-
         for name, data_str in variants:
             expected = hmac.new(key_bytes, data_str.encode("utf-8"), hashlib.sha256).hexdigest()
             if hmac.compare_digest(expected, signature):
                 logger.info(f"PayOS signature MATCH via variant: {name}")
                 return True
-
-        logger.warning(f"PayOS signature MISMATCH. got={signature[:32]}...")
-        for name, s in variants:
-            exp = hmac.new(key_bytes, s.encode("utf-8"), hashlib.sha256).hexdigest()
-            logger.info(f"  {name}: expected={exp[:32]}... data_str[:150]={s[:150]}")
         return False
     except Exception as e:
         logger.error(f"verify_payment_webhook error: {e}", exc_info=True)
