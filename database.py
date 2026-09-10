@@ -30,7 +30,6 @@ def _get_db():
 
 
 def get_db():
-    """Trả về database object (dùng cho các thao tác tùy chỉnh)."""
     return _get_db()
 
 
@@ -60,9 +59,6 @@ def _next_id(name: str) -> int:
     return result["seq"]
 
 
-# ============================================================
-# PRODUCTS
-# ============================================================
 def add_product(name, description, price, stock, keys_list, emoji_id=None):
     db = _get_db()
     new_id = _next_id("products")
@@ -121,7 +117,6 @@ def list_all_products():
 
 
 def get_available_key(product_id):
-    """Lấy và pop key đầu tiên (atomic)."""
     db = _get_db()
     pid = int(product_id)
     doc = db.products.find_one_and_update(
@@ -145,9 +140,6 @@ def _normalize_product(doc):
     return d
 
 
-# ============================================================
-# ORDERS
-# ============================================================
 def create_order(order_id, user_id, product_id, quantity, amount):
     db = _get_db()
     doc = {
@@ -205,9 +197,6 @@ def _normalize_order(doc):
     return d
 
 
-# ============================================================
-# USERS
-# ============================================================
 def register_user(user_id, username=None, first_name=None, last_name=None):
     db = _get_db()
     db.users.update_one(
@@ -224,9 +213,6 @@ def register_user(user_id, username=None, first_name=None, last_name=None):
     )
 
 
-# ============================================================
-# SETTINGS (UI custom emoji)
-# ============================================================
 def get_setting(key):
     db = _get_db()
     doc = db.settings.find_one({"key": key})
