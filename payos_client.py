@@ -11,13 +11,13 @@ logger = logging.getLogger(__name__)
 
 PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
+
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY,
         "Content-Type": "application/json"
     }
-
     payload = {
         "orderCode": order_code,
         "amount": amount,
@@ -28,7 +28,6 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         "buyerEmail": buyer_email or "",
         "expiredAt": int(time.time()) + 3600 * 24,
     }
-
     signature_data = {
         "amount": payload["amount"],
         "cancelUrl": payload["cancelUrl"],
@@ -42,20 +41,16 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         sign_str.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
-
     try:
-        resp = requests.post(
-            f"{PAYOS_BASE_URL}/payment-requests",
-            headers=headers, json=payload, timeout=10
-        )
+        resp = requests.post(f"{PAYOS_BASE_URL}/payment-requests", headers=headers, json=payload, timeout=10)
         data = resp.json()
-        logger.info(f"PayOS create link response: {json.dumps(data, ensure_ascii=False)[:400]}")
         if data.get("code") == "00":
             return data["data"]["checkoutUrl"], order_code
-        return None, data.get("desc", "Lỗi PayOS không xác định")
+        return None, data.get("desc", "Lỗi PayOS")
     except Exception as e:
         logger.error(f"create_payment_link error: {e}")
         return None, str(e)
+
 
 def verify_payment_webhook(webhook_body, signature_header=None):
     try:
@@ -65,20 +60,20 @@ def verify_payment_webhook(webhook_body, signature_header=None):
             return False
         key_bytes = Config.PAYOS_CHECKSUM_KEY.encode("utf-8")
         variants = [
-            ("sort+unicode",   json.dumps(data, separators=(",", ":"), sort_keys=True,  ensure_ascii=False)),
-            ("sort+ascii",     json.dumps(data, separators=(",", ":"), sort_keys=True,  ensure_ascii=True)),
-            ("nosort+unicode", json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=False)),
-            ("nosort+ascii",   json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=True)),
+            json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False),
+            json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=True),
+            json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=False),
+            json.dumps(data, separators=(",", ":"), sort_keys=False, ensure_ascii=True),
         ]
-        for name, data_str in variants:
-            expected = hmac.new(key_bytes, data_str.encode("utf-8"), hashlib.sha256).hexdigest()
+        for s in variants:
+            expected = hmac.new(key_bytes, s.encode("utf-8"), hashlib.sha256).hexdigest()
             if hmac.compare_digest(expected, signature):
-                logger.info(f"PayOS signature MATCH via variant: {name}")
                 return True
         return False
     except Exception as e:
-        logger.error(f"verify_payment_webhook error: {e}", exc_info=True)
+        logger.error(f"verify_payment_webhook error: {e}")
         return False
+
 
 def get_payment_status(order_code):
     headers = {
@@ -86,10 +81,7 @@ def get_payment_status(order_code):
         "x-api-key": Config.PAYOS_API_KEY
     }
     try:
-        resp = requests.get(
-            f"{PAYOS_BASE_URL}/payment-requests/{order_code}",
-            headers=headers, timeout=10
-        )
+        resp = requests.get(f"{PAYOS_BASE_URL}/payment-requests/{order_code}", headers=headers, timeout=10)
         return resp.json()
     except Exception as e:
         logger.error(f"get_payment_status error: {e}")
