@@ -1,5 +1,6 @@
 # main.py
 import asyncio
+import html
 import json
 import logging
 import os
@@ -9,13 +10,15 @@ from aiohttp import web
 from aiohttp.web import Request, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes
+    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
+    MessageHandler, filters
 )
 from telegram.constants import ParseMode
 
 from config import Config
 from database import (
-    init_db, add_product, get_product, list_products, list_all_products,
+    init_db, add_product, update_product, delete_product, delete_all_products,
+    get_product, list_products, list_all_products,
     get_available_key, create_order, get_order, update_order_status,
     get_pending_orders_by_user, get_db
 )
@@ -34,17 +37,54 @@ init_db()
 
 
 # ============================================================
-# UI HELPERS
+# HELPERS
 # ============================================================
+def extract_custom_emoji_from_message(message):
+    """Trích custom_emoji đầu tiên, trả về (clean_text, emoji_id)."""
+    text = message.text or message.caption or ""
+    entities = message.entities or message.caption_entities or []
+
+    custom_emojis = [e for e in entities if e.type == "custom_emoji"]
+    if not custom_emojis:
+        return text, None
+
+    emoji_id = custom_emojis[0].custom_emoji_id
+
+    encoded = text.encode("utf-16-le")
+    for e in sorted(custom_emojis, key=lambda x: x.offset, reverse=True):
+        s = e.offset * 2
+        en = (e.offset + e.length) * 2
+        encoded = encoded[:s] + encoded[en:]
+    clean_text = encoded.decode("utf-16-le")
+
+    return clean_text, emoji_id
+
+
+def render_name_html(name, emoji_id=None):
+    if emoji_id:
+        return f'<emoji id="{emoji_id}">🎁</emoji> {html.escape(name)}'
+    return html.escape(name)
+
+
+def render_description_html(desc):
+    if not desc:
+        return "<i>(không có mô tả)</i>"
+    return html.escape(desc)
+
+
+def make_product_button(product, prefix="🛒"):
+    text = f"{prefix} {product['name']} - {product['price']:,} VND (còn {product['stock']})"
+    kwargs = {"text": text, "callback_data": f"buy_{product['id']}"}
+    if product.get("emoji_id"):
+        kwargs["icon_custom_emoji_id"] = product["emoji_id"]
+    return InlineKeyboardButton(**kwargs)
+
+
 def product_buttons(products, page=0, per_page=5):
     keyboard = []
     for p in products:
-        keyboard.append([
-            InlineKeyboardButton(
-                f"🛒 {p['name']} - {p['price']:,} VND (còn {p['stock']})",
-                callback_data=f"buy_{p['id']}"
-            )
-        ])
+        keyboard.append([make_product_button(p)])
+
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("⏮ Trước", callback_data=f"page_{page - 1}"))
@@ -64,8 +104,16 @@ def order_buttons(order_id):
     return InlineKeyboardMarkup(keyboard)
 
 
+def detail_buttons(product_id):
+    keyboard = [
+        [InlineKeyboardButton("🛒 Mua ngay", callback_data=f"buy_{product_id}")],
+        [InlineKeyboardButton("🔙 Quay lại", callback_data="back_list")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ============================================================
-# BOT HANDLERS
+# BOT HANDLERS - USER
 # ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -79,8 +127,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🏪 Cửa hàng hiện chưa có sản phẩm.")
         return
     await update.message.reply_text(
-        "🏪 *Cửa hàng tài khoản Pro*\n\nChọn sản phẩm bên dưới:",
-        parse_mode=ParseMode.MARKDOWN,
+        "🏪 <b>Cửa hàng tài khoản Pro</b>\n\n"
+        "Chọn sản phẩm bên dưới. Nhấn giữ để xem chi tiết:",
+        parse_mode=ParseMode.HTML,
         reply_markup=product_buttons(prods, page=0)
     )
 
@@ -100,9 +149,41 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text("Không còn sản phẩm nào.", reply_markup=None)
         return
     await query.edit_message_text(
-        f"📋 *Danh sách sản phẩm (trang {page + 1}):*",
-        parse_mode=ParseMode.MARKDOWN,
+        f"📋 <b>Danh sách sản phẩm (trang {page + 1}):</b>",
+        parse_mode=ParseMode.HTML,
         reply_markup=product_buttons(products, page)
+    )
+
+
+async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback xem chi tiết sản phẩm: detail_<id>"""
+    query = update.callback_query
+    await query.answer()
+    try:
+        product_id = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        return
+
+    product = get_product(product_id)
+    if not product:
+        await query.edit_message_text("❌ Không tìm thấy sản phẩm.")
+        return
+
+    name_html = render_name_html(product["name"], product.get("emoji_id"))
+    desc_html = render_description_html(product.get("description"))
+
+    text = (
+        f"📦 <b>Chi tiết sản phẩm #{product['id']}</b>\n\n"
+        f"<b>Tên:</b> {name_html}\n"
+        f"<b>Giá:</b> {product['price']:,} VND\n"
+        f"<b>Tồn kho:</b> {product['stock']}\n"
+        f"<b>Đã bán:</b> {product['sold']}\n\n"
+        f"<b>Mô tả:</b>\n{desc_html}"
+    )
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=detail_buttons(product_id)
     )
 
 
@@ -125,11 +206,11 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     create_order(order_code, query.from_user.id, product_id, 1, product["price"])
 
-    desc = f"TK {product['name'][:15]}"
+    desc_payos = f"TK {product['name'][:15]}"
     payment_url, error = create_payment_link(
         order_code=order_code,
         amount=product["price"],
-        description=desc,
+        description=desc_payos,
         buyer_name=query.from_user.full_name
     )
 
@@ -138,16 +219,17 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "product_id": product_id,
             "user_id": query.from_user.id
         }
+        name_html = render_name_html(product["name"], product.get("emoji_id"))
         msg = (
-            f"🧾 *Đơn hàng #{order_code}*\n"
-            f"Sản phẩm: {product['name']}\n"
-            f"Số tiền: {product['price']:,} VND\n\n"
-            f"🔗 [Nhấn vào đây để thanh toán]({payment_url})\n\n"
-            f"Sau khi thanh toán, nhấn nút '✅ Đã thanh toán? Kiểm tra' bên dưới."
+            f"🧾 <b>Đơn hàng #{order_code}</b>\n\n"
+            f"<b>Sản phẩm:</b> {name_html}\n"
+            f"<b>Số tiền:</b> {product['price']:,} VND\n\n"
+            f'🔗 <a href="{payment_url}">Nhấn vào đây để thanh toán</a>\n\n'
+            f"Sau khi thanh toán, nhấn '✅ Đã thanh toán? Kiểm tra' bên dưới."
         )
         await query.edit_message_text(
             msg,
-            parse_mode=ParseMode.MARKDOWN,
+            parse_mode=ParseMode.HTML,
             reply_markup=order_buttons(order_code),
             disable_web_page_preview=True
         )
@@ -174,8 +256,8 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if order["status"] == "paid":
         await query.edit_message_text(
-            f"✅ Đơn hàng #{order_code} đã thanh toán.\n🔑 Key: `{order['key_assigned']}`",
-            parse_mode=ParseMode.MARKDOWN
+            f"✅ Đơn hàng #{order_code} đã thanh toán.\n🔑 Key: <code>{html.escape(order['key_assigned'])}</code>",
+            parse_mode=ParseMode.HTML
         )
         return
     if order["status"] == "cancelled":
@@ -196,8 +278,8 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key:
             update_order_status(order_code, "paid", key)
             await query.edit_message_text(
-                f"✅ Thanh toán thành công!\n🔑 Key: `{key}`",
-                parse_mode=ParseMode.MARKDOWN
+                f"✅ Thanh toán thành công!\n🔑 Key: <code>{html.escape(key)}</code>",
+                parse_mode=ParseMode.HTML
             )
         else:
             await query.edit_message_text(
@@ -240,13 +322,13 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not orders:
         await query.edit_message_text("Bạn không có đơn hàng nào đang chờ.")
         return
-    text = "📦 *Đơn hàng chờ thanh toán:*\n\n"
+    text = "📦 <b>Đơn hàng chờ thanh toán:</b>\n\n"
     for o in orders[:10]:
         prod = get_product(o["product_id"])
-        name = prod["name"] if prod else "Không xác định"
+        name = render_name_html(prod["name"], prod.get("emoji_id")) if prod else "Không xác định"
         text += f"#{o['id']} - {name} - {o['amount']:,} VND\n"
     text += "\nDùng nút 'Kiểm tra' ở từng đơn để cập nhật."
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML)
 
 
 # ============================================================
@@ -254,37 +336,41 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Cú pháp: /add <tên> <giá> <số_lượng> [keys]
-    - Tên: nhận mọi ký tự Unicode kể cả emoji, KHÔNG có dấu cách
-    - Giá: chấp nhận 2000, 2.000, 2,000 (tự strip dấu phân cách)
-    - Số lượng: số nguyên (tự điều chỉnh theo số key nếu có keys)
-    - Keys: tùy chọn. Nếu bỏ qua hoặc "-" → tạo sản phẩm chưa có key
+    Cú pháp:
+      /add <tên> <giá> <số_lượng> [keys]
+      /add <tên>|<mô tả> <giá> <số_lượng> [keys]
     """
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.message.reply_text("⛔ Bạn không có quyền.")
         return
 
     try:
-        parts = update.message.text.split()
+        clean_text, emoji_id = extract_custom_emoji_from_message(update.message)
+        parts = clean_text.split()
 
         if len(parts) < 4:
             await update.message.reply_text(
-                "❌ *Thiếu tham số.*\n\n"
+                "❌ <b>Thiếu tham số.</b>\n\n"
                 "Cú pháp:\n"
-                "`/add <tên> <giá> <số_lượng> [keys]`\n\n"
-                "Ví dụ có key:\n"
-                "`/add CapCut 2000 3 CC001,CC002,CC003`\n\n"
-                "Ví dụ KHÔNG có key (nạp sau bằng `/addkey`):\n"
-                "`/add CapCut🤪 2000 0 -`\n\n"
-                "Ghi chú:\n"
-                "• Tên nhận emoji, không có dấu cách\n"
-                "• Giá: `2000` hoặc `2.000` đều OK\n"
-                "• Key cách nhau bằng `,` không space",
-                parse_mode=ParseMode.MARKDOWN
+                "<code>/add &lt;tên&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n"
+                "<code>/add &lt;tên&gt;|&lt;mô tả&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n\n"
+                "Ví dụ:\n"
+                "<code>/add CapCut 50000 3 CC001,CC002,CC003</code>\n"
+                "<code>/add CapCut|Chỉnh sửa video 50000 3 CC001,CC002</code>",
+                parse_mode=ParseMode.HTML
             )
             return
 
-        name = parts[1]
+        # Tên + mô tả
+        name_part = parts[1]
+        if "|" in name_part:
+            name, description = name_part.split("|", 1)
+            name = name.strip()
+            description = description.strip()
+        else:
+            name = name_part.strip()
+            description = ""
+
         price_str = parts[2]
         stock_str = parts[3]
         keys_str = parts[4] if len(parts) >= 5 else "-"
@@ -293,58 +379,235 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0:
-                raise ValueError("price must be positive")
+                raise ValueError()
         except ValueError:
             await update.message.reply_text(
-                f"❌ Giá không hợp lệ: `{price_str}`\n"
-                f"Phải là số nguyên VND, ví dụ: `2000` hoặc `2.000`",
-                parse_mode=ParseMode.MARKDOWN
+                f"❌ Giá không hợp lệ: <code>{html.escape(price_str)}</code>",
+                parse_mode=ParseMode.HTML
             )
             return
 
-        # Parse keys trước
+        # Keys
         keys = []
         if keys_str.strip() and keys_str.strip() != "-":
             keys = [k.strip() for k in keys_str.split(",") if k.strip()]
 
-        # Parse số lượng
         if keys:
             stock = len(keys)
         else:
             try:
                 stock = int(stock_str.strip())
                 if stock < 0:
-                    raise ValueError("stock must be >= 0")
+                    raise ValueError()
             except ValueError:
                 await update.message.reply_text(
-                    f"❌ Số lượng không hợp lệ: `{stock_str}`\n"
-                    f"Phải là số nguyên ≥ 0",
-                    parse_mode=ParseMode.MARKDOWN
+                    f"❌ Số lượng không hợp lệ: <code>{html.escape(stock_str)}</code>",
+                    parse_mode=ParseMode.HTML
                 )
                 return
+            if stock > 0:
+                stock = 0
 
-        if not keys and stock > 0:
-            stock = 0
+        pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
 
-        pid = add_product(name, "", price, stock, keys)
+        name_html = render_name_html(name, emoji_id)
+        emoji_info = f"\n• Emoji ID: <code>{emoji_id}</code>" if emoji_id else ""
+        desc_info = f"\n• Mô tả: {html.escape(description)}" if description else ""
+
         await update.message.reply_text(
-            f"✅ *Đã thêm sản phẩm ID* `{pid}`\n"
-            f"• Tên: {name}\n"
+            f"✅ <b>Đã thêm sản phẩm ID</b> <code>{pid}</code>\n"
+            f"• Tên: {name_html}{desc_info}\n"
             f"• Giá: {price:,} VND\n"
             f"• Số lượng: {stock}\n"
-            f"• Keys: {len(keys)}\n\n"
-            f"Nạp thêm key bằng: `/addkey {pid} <key1,key2,...>`",
-            parse_mode=ParseMode.MARKDOWN
+            f"• Keys: {len(keys)}{emoji_info}\n\n"
+            f"Xem chi tiết: <code>/detail {pid}</code>",
+            parse_mode=ParseMode.HTML
         )
     except Exception as e:
         logger.error(f"admin_add_product error: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Lỗi: {e}")
+        await update.message.reply_text(f"❌ Lỗi: {html.escape(str(e))}")
+
+
+async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Import sản phẩm từ file .txt đính kèm.
+    Format mỗi dòng:
+      Tên|Mô tả|Giá|Key1,Key2,Key3
+      Tên|Giá|Key1,Key2,Key3         (không mô tả, 3 phần)
+      Tên|Mô tả|Giá|                 (không key)
+    Dòng bắt đầu bằng # là comment.
+    """
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        await update.message.reply_text("⛔ Bạn không có quyền.")
+        return
+
+    doc = update.message.document
+    if not doc:
+        return
+
+    filename = doc.file_name or "unknown.txt"
+    if not filename.lower().endswith(".txt"):
+        await update.message.reply_text("❌ Chỉ chấp nhận file .txt")
+        return
+
+    try:
+        tg_file = await doc.get_file()
+        raw = await tg_file.download_as_bytearray()
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            content = raw.decode("utf-8-sig")  # có BOM
+        except Exception:
+            content = raw.decode("latin-1")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Không đọc được file: {e}")
+        return
+
+    success, failed = [], []
+
+    for line_no, line in enumerate(content.splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        try:
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 3:
+                failed.append((line_no, line, "cần ≥ 3 phần"))
+                continue
+
+            # Xử lý 3 hoặc 4 phần
+            if len(parts) == 3:
+                # Tên|Giá|Keys
+                name = parts[0]
+                description = ""
+                price_str = parts[1]
+                keys_str = parts[2]
+            else:
+                # Tên|Mô tả|Giá|Keys
+                name = parts[0]
+                description = parts[1]
+                price_str = parts[2]
+                keys_str = parts[3] if len(parts) >= 4 else ""
+
+            if not name:
+                failed.append((line_no, line, "thiếu tên"))
+                continue
+
+            try:
+                price = int(price_str.replace(".", "").replace(",", "").strip())
+                if price <= 0:
+                    raise ValueError()
+            except ValueError:
+                failed.append((line_no, line, f"giá không hợp lệ: {price_str}"))
+                continue
+
+            keys = []
+            if keys_str and keys_str != "-":
+                keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+
+            stock = len(keys)
+            pid = add_product(name, description, price, stock, keys, emoji_id=None)
+            success.append((pid, name, price, stock))
+
+        except Exception as e:
+            failed.append((line_no, line, str(e)))
+
+    # Báo cáo
+    report = f"📥 <b>Import file:</b> <code>{html.escape(filename)}</code>\n\n"
+    report += f"✅ Thành công: <b>{len(success)}</b>\n"
+    report += f"❌ Thất bại: <b>{len(failed)}</b>\n\n"
+
+    if success:
+        report += "<b>Đã thêm:</b>\n"
+        for pid, name, price, stock in success[:20]:
+            report += f"• <code>{pid}</code> {html.escape(name)} - {price:,}đ - {stock} key\n"
+        if len(success) > 20:
+            report += f"<i>... và {len(success) - 20} sản phẩm khác</i>\n"
+
+    if failed:
+        report += "\n<b>Lỗi:</b>\n"
+        for line_no, line, err in failed[:10]:
+            report += f"• Dòng {line_no}: {html.escape(err)}\n"
+        if len(failed) > 10:
+            report += f"<i>... và {len(failed) - 10} lỗi khác</i>\n"
+
+    await update.message.reply_text(report, parse_mode=ParseMode.HTML)
 
 
 async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        await update.message.reply_text("⛔ Bạn không có quyền.")
+        return
+    try:
+        parts = update.message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            await update.message.reply_text(
+                "Cú pháp: <code>/addkey &lt;product_id&gt; &lt;key1,key2,...&gt;</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        product_id = int(parts[1])
+        new_keys = [k.strip() for k in parts[2].split(",") if k.strip()]
+        if not new_keys:
+            await update.message.reply_text("❌ Cần ít nhất 1 key.")
+            return
+        product = get_product(product_id)
+        if not product:
+            await update.message.reply_text(f"❌ Không tìm thấy SP <code>{product_id}</code>.")
+            return
+        existing = json.loads(product["keys"] or "[]")
+        existing.extend(new_keys)
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE products SET keys = ?, stock = stock + ? WHERE id = ?",
+                (json.dumps(existing), len(new_keys), product_id)
+            )
+        await update.message.reply_text(
+            f"✅ Đã thêm <b>{len(new_keys)}</b> key vào <code>{product_id}</code>\n"
+            f"• Tồn kho mới: {product['stock'] + len(new_keys)}",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Lỗi: {html.escape(str(e))}")
+
+
+async def admin_set_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        await update.message.reply_text("⛔ Bạn không có quyền.")
+        return
+    try:
+        clean_text, emoji_id = extract_custom_emoji_from_message(update.message)
+        parts = clean_text.split()
+        if len(parts) < 2:
+            await update.message.reply_text(
+                "Cú pháp: <code>/setemoji &lt;product_id&gt; [dán emoji Premium]</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        product_id = int(parts[1])
+        if not emoji_id:
+            await update.message.reply_text("❌ Không tìm thấy custom emoji Premium.")
+            return
+        product = get_product(product_id)
+        if not product:
+            await update.message.reply_text(f"❌ Không tìm thấy SP <code>{product_id}</code>.")
+            return
+        with get_db() as conn:
+            conn.execute("UPDATE products SET emoji_id = ? WHERE id = ?", (emoji_id, product_id))
+        name_html = render_name_html(product["name"], emoji_id)
+        await update.message.reply_text(
+            f"✅ Đã đặt emoji cho <code>{product_id}</code>\n"
+            f"• {name_html}",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Lỗi: {html.escape(str(e))}")
+
+
+async def admin_edit_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Cú pháp: /addkey <product_id> <key1,key2,...>
-    Nạp thêm key vào sản phẩm đã tồn tại.
+    Cú pháp: /setdesc <product_id> <mô tả mới>
     """
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.message.reply_text("⛔ Bạn không có quyền.")
@@ -353,57 +616,69 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = update.message.text.split(maxsplit=2)
         if len(parts) < 3:
             await update.message.reply_text(
-                "Cú pháp: `/addkey <product_id> <key1,key2,...>`\n"
-                "Ví dụ: `/addkey 1 CC001,CC002,CC003`",
-                parse_mode=ParseMode.MARKDOWN
+                "Cú pháp: <code>/setdesc &lt;product_id&gt; &lt;mô tả&gt;</code>",
+                parse_mode=ParseMode.HTML
             )
             return
-
-        try:
-            product_id = int(parts[1])
-        except ValueError:
-            await update.message.reply_text(
-                f"❌ product_id không hợp lệ: `{parts[1]}`",
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return
-
-        new_keys = [k.strip() for k in parts[2].split(",") if k.strip()]
-        if not new_keys:
-            await update.message.reply_text("❌ Cần ít nhất 1 key.")
-            return
-
+        product_id = int(parts[1])
+        new_desc = parts[2].strip()
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(
-                f"❌ Không tìm thấy sản phẩm ID `{product_id}`",
-                parse_mode=ParseMode.MARKDOWN
-            )
+            await update.message.reply_text(f"❌ Không tìm thấy SP <code>{product_id}</code>.")
             return
-
-        existing = json.loads(product["keys"] or "[]")
-        existing.extend(new_keys)
-
         with get_db() as conn:
-            conn.execute(
-                "UPDATE products SET keys = ?, stock = stock + ? WHERE id = ?",
-                (json.dumps(existing), len(new_keys), product_id)
-            )
-
+            conn.execute("UPDATE products SET description = ? WHERE id = ?", (new_desc, product_id))
         await update.message.reply_text(
-            f"✅ Đã thêm *{len(new_keys)}* key vào sản phẩm `{product_id}`\n"
-            f"• Tên: {product['name']}\n"
-            f"• Tồn kho cũ: {product['stock']}\n"
-            f"• Tồn kho mới: {product['stock'] + len(new_keys)}",
-            parse_mode=ParseMode.MARKDOWN
+            f"✅ Đã cập nhật mô tả SP <code>{product_id}</code>:\n\n{html.escape(new_desc)}",
+            parse_mode=ParseMode.HTML
         )
     except Exception as e:
-        logger.error(f"admin_add_key error: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ Lỗi: {e}")
+        await update.message.reply_text(f"❌ Lỗi: {html.escape(str(e))}")
+
+
+async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cú pháp: /detail <product_id>"""
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        await update.message.reply_text("⛔ Bạn không có quyền.")
+        return
+    try:
+        parts = update.message.text.split()
+        if len(parts) < 2:
+            await update.message.reply_text(
+                "Cú pháp: <code>/detail &lt;product_id&gt;</code>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        product_id = int(parts[1])
+        product = get_product(product_id)
+        if not product:
+            await update.message.reply_text(f"❌ Không tìm thấy SP <code>{product_id}</code>.")
+            return
+        name_html = render_name_html(product["name"], product.get("emoji_id"))
+        desc_html = html.escape(product.get("description") or "(không có mô tả)")
+        keys = json.loads(product["keys"] or "[]")
+
+        text = (
+            f"📦 <b>Chi tiết sản phẩm #{product['id']}</b>\n\n"
+            f"• <b>Tên:</b> {name_html}\n"
+            f"• <b>Mô tả:</b> {desc_html}\n"
+            f"• <b>Giá:</b> {product['price']:,} VND\n"
+            f"• <b>Tồn kho:</b> {product['stock']}\n"
+            f"• <b>Đã bán:</b> {product['sold']}\n"
+            f"• <b>Emoji ID:</b> <code>{product.get('emoji_id') or 'không có'}</code>\n\n"
+            f"<b>Keys còn lại ({len(keys)}):</b>\n"
+        )
+        for k in keys[:10]:
+            text += f"  <code>{html.escape(k)}</code>\n"
+        if len(keys) > 10:
+            text += f"  <i>... và {len(keys) - 10} key khác</i>\n"
+
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Lỗi: {html.escape(str(e))}")
 
 
 async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Liệt kê tất cả sản phẩm kể cả đã hết hàng."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         await update.message.reply_text("⛔ Bạn không có quyền.")
         return
@@ -411,10 +686,15 @@ async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not products:
         await update.message.reply_text("Chưa có sản phẩm nào.")
         return
-    text = "📋 *Toàn bộ sản phẩm:*\n\n"
+    text = "📋 <b>Toàn bộ sản phẩm:</b>\n\n"
     for p in products:
-        text += f"`{p['id']}` • {p['name']} • {p['price']:,}đ • kho: {p['stock']} • đã bán: {p['sold']}\n"
-    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        name_html = render_name_html(p["name"], p.get("emoji_id"))
+        text += (
+            f"<code>{p['id']}</code> • {name_html} • {p['price']:,}đ • "
+            f"kho: {p['stock']} • đã bán: {p['sold']}\n"
+        )
+    text += "\nXem chi tiết: <code>/detail &lt;id&gt;</code>\nXóa: <code>/del &lt;id&gt;</code>"
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 async def admin_delete_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -426,20 +706,68 @@ async def admin_delete_product(update: Update, context: ContextTypes.DEFAULT_TYP
         parts = update.message.text.split()
         if len(parts) < 2:
             await update.message.reply_text(
-                "Cú pháp: `/del <product_id>`",
-                parse_mode=ParseMode.MARKDOWN
+                "Cú pháp: <code>/del &lt;product_id&gt;</code>\n"
+                "Xóa tất cả: <code>/delall confirm</code>",
+                parse_mode=ParseMode.HTML
             )
             return
         product_id = int(parts[1])
         product = get_product(product_id)
         if not product:
-            await update.message.reply_text(f"❌ Không tìm thấy sản phẩm `{product_id}`.")
+            await update.message.reply_text(f"❌ Không tìm thấy SP <code>{product_id}</code>.")
             return
-        with get_db() as conn:
-            conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
-        await update.message.reply_text(f"🗑️ Đã xóa sản phẩm `{product_id}` - {product['name']}.")
+        ok = delete_product(product_id)
+        if ok:
+            name_html = render_name_html(product["name"], product.get("emoji_id"))
+            await update.message.reply_text(
+                f"🗑️ Đã xóa SP <code>{product_id}</code> - {name_html}",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text("❌ Xóa thất bại.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Lỗi: {e}")
+        await update.message.reply_text(f"❌ Lỗi: {html.escape(str(e))}")
+
+
+async def admin_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cú pháp: /delall confirm"""
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        await update.message.reply_text("⛔ Bạn không có quyền.")
+        return
+    parts = update.message.text.split()
+    if len(parts) < 2 or parts[1].lower() != "confirm":
+        await update.message.reply_text(
+            "⚠️ <b>Cảnh báo:</b> Xóa TẤT CẢ sản phẩm.\n"
+            "Xác nhận: <code>/delall confirm</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    count = delete_all_products()
+    await update.message.reply_text(f"🗑️ Đã xóa <b>{count}</b> sản phẩm.", parse_mode=ParseMode.HTML)
+
+
+async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "🛠️ <b>Lệnh admin:</b>\n\n"
+        "<b>Thêm sản phẩm:</b>\n"
+        "• <code>/add Tên Giá SL Keys</code>\n"
+        "• <code>/add Tên|Mô tả Giá SL Keys</code>\n"
+        "• Gửi file .txt để import hàng loạt\n\n"
+        "<b>Quản lý:</b>\n"
+        "• <code>/list</code> - Xem tất cả\n"
+        "• <code>/detail &lt;id&gt;</code> - Xem chi tiết\n"
+        "• <code>/del &lt;id&gt;</code> - Xóa 1\n"
+        "• <code>/delall confirm</code> - Xóa hết\n\n"
+        "<b>Cập nhật:</b>\n"
+        "• <code>/addkey &lt;id&gt; K1,K2</code> - Thêm key\n"
+        "• <code>/setdesc &lt;id&gt; Mô tả mới</code> - Sửa mô tả\n"
+        "• <code>/setemoji &lt;id&gt; 🎁</code> - Đặt emoji Premium\n\n"
+        "<b>Format file .txt:</b>\n"
+        "<code>Tên|Mô tả|Giá|Key1,Key2,Key3</code>\n"
+        "<code>Tên|Giá|Key1,Key2</code>\n"
+        "Dòng bắt đầu bằng <code>#</code> là comment."
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 # ============================================================
@@ -462,11 +790,9 @@ async def telegram_webhook(request: Request):
         return Response(status=200, content_type="text/plain")
     if request.method == "GET":
         return Response(text="Telegram webhook OK", status=200)
-
     try:
         raw = await request.read()
         if not raw:
-            logger.warning("Telegram POST body rỗng")
             return Response(status=400, text="Empty body")
         data = json.loads(raw.decode("utf-8"))
         update = Update.de_json(data, request.app["bot_app"].bot)
@@ -482,16 +808,13 @@ async def payos_webhook(request: Request):
         return Response(status=200, content_type="text/plain")
     if request.method == "GET":
         return Response(text="PayOS webhook OK", status=200)
-
     try:
         raw = await request.read()
         if not raw:
             return Response(status=200, text="OK")
-
         try:
             body = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError as e:
-            logger.error(f"PayOS body không phải JSON: {e}")
+        except json.JSONDecodeError:
             return Response(status=200, text="OK")
 
         logger.info(f"PayOS webhook body: {json.dumps(body, ensure_ascii=False)[:800]}")
@@ -501,14 +824,11 @@ async def payos_webhook(request: Request):
         payos_code = data.get("code")
         description = data.get("description", "")
 
-        # Bỏ qua test webhook của PayOS
         if order_code == 123 or description == "VQRIO123":
-            logger.info("PayOS TEST webhook detected → skip verify, trả 200")
             return Response(text="OK", status=200)
 
         sig_header = request.headers.get("x-payos-signature", "")
         if not verify_payment_webhook(body, sig_header):
-            logger.warning("PayOS signature invalid — bỏ qua, trả 200")
             return Response(status=200, text="OK")
 
         if payos_code == "00" and order_code:
@@ -521,14 +841,11 @@ async def payos_webhook(request: Request):
                     try:
                         await app.bot.send_message(
                             chat_id=order["user_id"],
-                            text=f"✅ Thanh toán thành công!\n🔑 Key của bạn: `{key}`",
-                            parse_mode=ParseMode.MARKDOWN
+                            text=f"✅ Thanh toán thành công!\n🔑 Key: <code>{html.escape(key)}</code>",
+                            parse_mode=ParseMode.HTML
                         )
                     except Exception as e:
                         logger.error(f"Gửi tin nhắn thất bại: {e}")
-                else:
-                    logger.warning(f"Hết key cho product {order['product_id']}")
-
         return Response(text="OK", status=200)
     except Exception as e:
         logger.error(f"PayOS webhook error: {e}", exc_info=True)
@@ -541,21 +858,34 @@ async def payos_webhook(request: Request):
 async def main():
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
-    # User commands
+    # User
     app.add_handler(CommandHandler("start", start))
 
     # Admin commands
     app.add_handler(CommandHandler("add", admin_add_product))
     app.add_handler(CommandHandler("addkey", admin_add_key))
+    app.add_handler(CommandHandler("setemoji", admin_set_emoji))
+    app.add_handler(CommandHandler("setdesc", admin_edit_description))
+    app.add_handler(CommandHandler("detail", admin_detail))
     app.add_handler(CommandHandler("list", admin_list_products))
     app.add_handler(CommandHandler("del", admin_delete_product))
+    app.add_handler(CommandHandler("delall", admin_delete_all))
+    app.add_handler(CommandHandler("help", admin_help))
+
+    # Import file .txt (chỉ admin, chỉ khi có caption trống hoặc dùng /import)
+    app.add_handler(MessageHandler(
+        filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
+        admin_import_products
+    ))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
+    app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
     app.add_handler(CallbackQueryHandler(check_order, pattern=r"^check_"))
     app.add_handler(CallbackQueryHandler(cancel_order, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(my_orders, pattern=r"^my_orders$"))
+    app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^back_list$"))
 
     await app.initialize()
     await app.start()
@@ -565,11 +895,10 @@ async def main():
         await app.bot.set_webhook(webhook_url)
         logger.info(f"Telegram webhook set to: {webhook_url}")
     else:
-        logger.warning("WEBHOOK_URL chưa cấu hình — Telegram sẽ không nhận update!")
+        logger.warning("WEBHOOK_URL chưa cấu hình!")
 
     web_app = web.Application()
     web_app["bot_app"] = app
-
     web_app.router.add_get("/", root_handler)
     web_app.router.add_get("/health", health_check)
     web_app.router.add_get("/telegram", telegram_webhook)
@@ -579,7 +908,6 @@ async def main():
 
     runner = web.AppRunner(web_app)
     await runner.setup()
-
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
@@ -593,8 +921,6 @@ async def main():
         await runner.cleanup()
         await app.stop()
         await app.shutdown()
-        logger.info("Bot shutdown complete")
-
 
 if __name__ == "__main__":
     try:
