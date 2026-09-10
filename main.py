@@ -280,23 +280,22 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # HTTP HANDLERS
 # ============================================================
 async def root_handler(request: Request):
-    if request.method.upper() == "HEAD":
-        return Response(status=200)
+    if request.method == "HEAD":
+        return Response(status=200, content_type="text/plain")
     return Response(text="Bot is running", status=200)
 
 
 async def health_check(request: Request):
-    if request.method.upper() == "HEAD":
-        return Response(status=200)
+    if request.method == "HEAD":
+        return Response(status=200, content_type="text/plain")
     return Response(text="OK", status=200)
 
 
 async def telegram_webhook(request: Request):
-    """HEAD/GET verify, POST update."""
-    method = request.method.upper()
-    if method == "HEAD":
-        return Response(status=200)
-    if method == "GET":
+    """aiohttp tự gọi handler này cho cả GET và HEAD (HEAD = GET không body)."""
+    if request.method == "HEAD":
+        return Response(status=200, content_type="text/plain")
+    if request.method == "GET":
         return Response(text="Telegram webhook OK", status=200)
 
     try:
@@ -314,11 +313,10 @@ async def telegram_webhook(request: Request):
 
 
 async def payos_webhook(request: Request):
-    """HEAD verify, GET test, POST xử lý webhook."""
-    method = request.method.upper()
-    if method == "HEAD":
-        return Response(status=200)
-    if method == "GET":
+    """aiohttp tự gọi handler này cho cả GET và HEAD."""
+    if request.method == "HEAD":
+        return Response(status=200, content_type="text/plain")
+    if request.method == "GET":
         return Response(text="PayOS webhook OK", status=200)
 
     try:
@@ -392,22 +390,16 @@ async def main():
         logger.warning("WEBHOOK_URL chưa cấu hình — Telegram sẽ không nhận update!")
 
     # --- aiohttp Web Server ---
+    # LƯU Ý: KHÔNG gọi add_head vì aiohttp tự động thêm HEAD khi có add_get
     web_app = web.Application()
     web_app["bot_app"] = app
 
     web_app.router.add_get("/", root_handler)
-    web_app.router.add_head("/", root_handler)
-
     web_app.router.add_get("/health", health_check)
-    web_app.router.add_head("/health", health_check)
-
     web_app.router.add_get("/telegram", telegram_webhook)
     web_app.router.add_post("/telegram", telegram_webhook)
-    web_app.router.add_head("/telegram", telegram_webhook)
-
     web_app.router.add_get("/payos", payos_webhook)
     web_app.router.add_post("/payos", payos_webhook)
-    web_app.router.add_head("/payos", payos_webhook)
 
     runner = web.AppRunner(web_app)
     await runner.setup()
