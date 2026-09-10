@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
-    """Tạo link thanh toán PayOS. Trả về (payment_url, order_code) hoặc (None, error_msg)."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY,
@@ -59,11 +58,6 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         return None, str(e)
 
 def verify_payment_webhook(webhook_body, signature_header=None):
-    """
-    Xác thực webhook PayOS v2.
-    Body: {"code":"00","desc":"...","data":{...},"signature":"..."}
-    Chữ ký = HMAC_SHA256(checksum, json.dumps(data, separators=(',',':'), sort_keys=True))
-    """
     try:
         data = webhook_body.get("data", {})
         signature = webhook_body.get("signature") or signature_header or ""
@@ -85,7 +79,6 @@ def verify_payment_webhook(webhook_body, signature_header=None):
         return False
 
 def get_payment_status(order_code):
-    """Gọi API PayOS để kiểm tra trạng thái đơn hàng."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY
