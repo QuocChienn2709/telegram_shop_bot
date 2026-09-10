@@ -27,6 +27,7 @@ def init_db():
                 stock INTEGER DEFAULT 0,
                 keys TEXT,
                 sold INTEGER DEFAULT 0,
+                emoji_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -55,13 +56,45 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
 
-def add_product(name, description, price, stock, keys_list):
+        # Migration
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()]
+        if "emoji_id" not in cols:
+            conn.execute("ALTER TABLE products ADD COLUMN emoji_id TEXT")
+
+def add_product(name, description, price, stock, keys_list, emoji_id=None):
     with get_db() as conn:
         cur = conn.execute(
-            "INSERT INTO products (name, description, price, stock, keys) VALUES (?, ?, ?, ?, ?)",
-            (name, description, price, stock, json.dumps(keys_list))
+            "INSERT INTO products (name, description, price, stock, keys, emoji_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (name, description, price, stock, json.dumps(keys_list), emoji_id)
         )
         return cur.lastrowid
+
+def update_product(product_id, name=None, description=None, price=None, emoji_id=None):
+    fields, values = [], []
+    if name is not None:
+        fields.append("name = ?"); values.append(name)
+    if description is not None:
+        fields.append("description = ?"); values.append(description)
+    if price is not None:
+        fields.append("price = ?"); values.append(price)
+    if emoji_id is not None:
+        fields.append("emoji_id = ?"); values.append(emoji_id)
+    if not fields:
+        return False
+    values.append(product_id)
+    with get_db() as conn:
+        conn.execute(f"UPDATE products SET {', '.join(fields)} WHERE id = ?", values)
+    return True
+
+def delete_product(product_id):
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        return cur.rowcount > 0
+
+def delete_all_products():
+    with get_db() as conn:
+        cur = conn.execute("DELETE FROM products")
+        return cur.rowcount
 
 def get_product(product_id):
     with get_db() as conn:
@@ -71,16 +104,15 @@ def get_product(product_id):
 def list_products(limit=5, offset=0):
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, price, stock, sold FROM products WHERE stock > 0 ORDER BY id LIMIT ? OFFSET ?",
+            "SELECT id, name, price, stock, sold, emoji_id FROM products WHERE stock > 0 ORDER BY id LIMIT ? OFFSET ?",
             (limit, offset)
         ).fetchall()
         return [dict(r) for r in rows]
 
 def list_all_products():
-    """Dùng cho admin: liệt kê cả sản phẩm hết hàng."""
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, price, stock, sold FROM products ORDER BY id"
+            "SELECT id, name, description, price, stock, sold, emoji_id FROM products ORDER BY id"
         ).fetchall()
         return [dict(r) for r in rows]
 
