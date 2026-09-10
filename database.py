@@ -7,7 +7,7 @@ DB_PATH = "shop.db"
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -100,10 +100,7 @@ def create_order(order_id, user_id, product_id, quantity, amount):
             "INSERT INTO orders (id, user_id, product_id, quantity, amount) VALUES (?, ?, ?, ?, ?)",
             (order_id, user_id, product_id, quantity, amount)
         )
-        conn.execute(
-            "INSERT OR IGNORE INTO users (user_id) VALUES (?)",
-            (user_id,)
-        )
+        conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
 
 def get_order(order_id):
     with get_db() as conn:
@@ -118,10 +115,7 @@ def update_order_status(order_id, status, key_assigned=None):
                 (status, key_assigned, order_id)
             )
         else:
-            conn.execute(
-                "UPDATE orders SET status = ? WHERE id = ?",
-                (status, order_id)
-            )
+            conn.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
 
 def get_pending_orders_by_user(user_id):
     with get_db() as conn:
