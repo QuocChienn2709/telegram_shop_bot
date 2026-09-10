@@ -12,10 +12,7 @@ logger = logging.getLogger(__name__)
 PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
-    """
-    Tạo link thanh toán PayOS.
-    Trả về: (payment_url, order_code) hoặc (None, error_msg)
-    """
+    """Tạo link thanh toán PayOS. Trả về (payment_url, order_code) hoặc (None, error_msg)."""
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY,
@@ -33,7 +30,6 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         "expiredAt": int(time.time()) + 3600 * 24,
     }
 
-    # Chữ ký tạo link: amount, cancelUrl, description, orderCode, returnUrl (sort alphabet)
     signature_data = {
         "amount": payload["amount"],
         "cancelUrl": payload["cancelUrl"],
@@ -51,9 +47,7 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
     try:
         resp = requests.post(
             f"{PAYOS_BASE_URL}/payment-requests",
-            headers=headers,
-            json=payload,
-            timeout=10
+            headers=headers, json=payload, timeout=10
         )
         data = resp.json()
         logger.info(f"PayOS create link response: {json.dumps(data)[:400]}")
@@ -67,7 +61,7 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
 def verify_payment_webhook(webhook_body, signature_header=None):
     """
     Xác thực webhook PayOS v2.
-    Body chuẩn: {"code":"00","desc":"...","data":{...},"signature":"..."}
+    Body: {"code":"00","desc":"...","data":{...},"signature":"..."}
     Chữ ký = HMAC_SHA256(checksum, json.dumps(data, separators=(',',':'), sort_keys=True))
     """
     try:
@@ -77,7 +71,6 @@ def verify_payment_webhook(webhook_body, signature_header=None):
             logger.warning("verify_payment_webhook: thiếu data hoặc signature")
             return False
 
-        # PayOS: sort_keys=True, không khoảng trắng
         data_str = json.dumps(data, separators=(",", ":"), sort_keys=True)
         expected = hmac.new(
             Config.PAYOS_CHECKSUM_KEY.encode("utf-8"),
@@ -100,8 +93,7 @@ def get_payment_status(order_code):
     try:
         resp = requests.get(
             f"{PAYOS_BASE_URL}/payment-requests/{order_code}",
-            headers=headers,
-            timeout=10
+            headers=headers, timeout=10
         )
         return resp.json()
     except Exception as e:
