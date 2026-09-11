@@ -13,6 +13,9 @@ PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
 
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
+    """
+    description PHẢI là mã đơn hàng để dễ tra soát, ví dụ: "DH1234567890"
+    """
     headers = {
         "x-client-id": Config.PAYOS_CLIENT_ID,
         "x-api-key": Config.PAYOS_API_KEY,
