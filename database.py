@@ -184,26 +184,52 @@ def delete_setting(key):
 def get_all_settings():
     return list(_get_db().settings.find({}, {"key": 1, "emoji_id": 1, "_id": 0}))
 
-# TEXTS
+# TEXTS - có emoji support
 def get_text(key, default=""):
+    """Trả về text đã có emoji placeholder nếu có."""
     doc = _get_db().texts.find_one({"key": key})
-    return doc.get("value") if doc and doc.get("value") is not None else default
+    if not doc: return default
+    val = doc.get("value")
+    if val is None: return default
+    eid = doc.get("emoji_id")
+    if eid:
+        return f'<tg-emoji emoji-id="{eid}">🎁</tg-emoji> {val}'
+    return val
 
-def set_text(key, value):
-    _get_db().texts.update_one({"key": key}, {"$set": {"value": value, "updated_at": datetime.utcnow()}}, upsert=True)
+def get_text_raw(key):
+    """Trả về raw value + emoji_id riêng (dùng cho admin view)."""
+    doc = _get_db().texts.find_one({"key": key})
+    if not doc: return None, None
+    return doc.get("value"), doc.get("emoji_id")
+
+def set_text(key, value, emoji_id=None, keep_emoji=True):
+    """
+    Set text.
+    - keep_emoji=True: nếu emoji_id=None thì giữ emoji cũ
+    - keep_emoji=False: xóa emoji cũ
+    """
+    db = _get_db()
+    upd = {"value": value, "updated_at": datetime.utcnow()}
+    if emoji_id is not None:
+        upd["emoji_id"] = emoji_id
+    elif not keep_emoji:
+        # Xóa emoji cũ
+        db.texts.update_one({"key": key}, {"$unset": {"emoji_id": ""}, "$set": upd}, upsert=True)
+        return
+    db.texts.update_one({"key": key}, {"$set": upd}, upsert=True)
 
 def delete_text(key):
     _get_db().texts.delete_one({"key": key})
 
 def get_all_texts():
-    return list(_get_db().texts.find({}, {"key": 1, "value": 1, "_id": 0}))
+    return list(_get_db().texts.find({}, {"key": 1, "value": 1, "emoji_id": 1, "_id": 0}))
 
 # BINANCE
 def get_binance_address(): return get_text("binance_address", "")
-def set_binance_address(a): set_text("binance_address", a)
+def set_binance_address(a): set_text("binance_address", a, keep_emoji=False)
 def get_binance_network(): return get_text("binance_network", "TRC20")
-def set_binance_network(n): set_text("binance_network", n)
+def set_binance_network(n): set_text("binance_network", n, keep_emoji=False)
 def get_usdt_rate():
     try: return int(get_text("usdt_rate", "25000"))
     except ValueError: return 25000
-def set_usdt_rate(r): set_text("usdt_rate", str(int(r)))
+def set_usdt_rate(r): set_text("usdt_rate", str(int(r)), keep_emoji=False)
