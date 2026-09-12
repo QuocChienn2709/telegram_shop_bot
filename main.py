@@ -69,13 +69,13 @@ DEFAULT_TEXTS = {
         "binance_title": "Thanh toán Binance USDT",
         "binance_amount": "Số tiền", "binance_address": "Địa chỉ ví",
         "binance_network": "Mạng", "binance_memo": "Nội dung/Memo",
-        "binance_note": "Chuyển đúng số tiền và mạng. Ghi đúng nội dung để admin xác nhận.",
+        "binance_note": "Chuyển đúng số tiền và mạng.",
         "binance_not_set": "Admin chưa cấu hình ví Binance.",
         "binance_sent": "Tôi đã chuyển khoản",
-        "binance_waiting": "Đang chờ admin xác nhận. Vui lòng đợi.",
+        "binance_waiting": "Đang chờ admin xác nhận.",
         "lang_changed": "Đã đổi ngôn ngữ: Tiếng Việt",
-        "lang_choose": "Chọn ngôn ngữ để tiếp tục:",
-        "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
+        "lang_choose": "Chọn ngôn ngữ:",
+        "lang_required": "Vui lòng chọn ngôn ngữ trước:",
         "btn_lang_vi": "Tiếng Việt", "btn_lang_en": "English",
     },
     "en": {
@@ -101,7 +101,7 @@ DEFAULT_TEXTS = {
         "order_not_found": "Order not found.",
         "order_paid": "Order already paid.",
         "order_cancelled": "Order cancelled.",
-        "order_pending": "not paid yet. Please pay or cancel.",
+        "order_pending": "not paid yet.",
         "order_success": "Payment successful!",
         "order_no_key": "Paid but out of keys. Contact admin.",
         "order_cannot_cancel": "Cannot cancel this order.",
@@ -116,24 +116,19 @@ DEFAULT_TEXTS = {
         "binance_title": "Binance USDT Payment",
         "binance_amount": "Amount", "binance_address": "Wallet address",
         "binance_network": "Network", "binance_memo": "Memo",
-        "binance_note": "Send exact amount on correct network with memo.",
+        "binance_note": "Send exact amount on correct network.",
         "binance_not_set": "Binance wallet not configured.",
         "binance_sent": "I have sent",
-        "binance_waiting": "Waiting for admin confirmation. Please wait.",
+        "binance_waiting": "Waiting for admin confirmation.",
         "lang_changed": "Language changed to English",
-        "lang_choose": "Choose language to continue:",
-        "lang_required": "Please select a language to continue:",
+        "lang_choose": "Choose language:",
+        "lang_required": "Please select a language:",
         "btn_lang_vi": "Tiếng Việt", "btn_lang_en": "English",
     }
 }
 
 
 def t(user_id, key, **kwargs):
-    """
-    Lấy text theo lang user.
-    Nếu DB có override (bao gồm cả emoji) → dùng.
-    ⚠️ Text override có thể chứa HTML <tg-emoji> → không escape.
-    """
     lang = get_user_lang(user_id)
     if lang not in DEFAULT_TEXTS: lang = "vi"
     ov = get_text(f"{lang}_{key}")
@@ -198,7 +193,7 @@ def format_key_display(key, lang="vi"):
 
 
 # ============================================================
-# UI EMOJI KEYS
+# UI EMOJI
 # ============================================================
 UI_KEYS = {
     "shop": "Tiêu đề shop",
@@ -207,18 +202,18 @@ UI_KEYS = {
     "back": "Nút quay lại",
     "next": "Nút trang sau",
     "prev": "Nút trang trước",
-    "check": "Nút kiểm tra thanh toán",
+    "check": "Nút kiểm tra TT",
     "cancel": "Nút hủy đơn",
-    "pay": "Nút thanh toán chung",
+    "pay": "Nút thanh toán",
     "pay_payos": "Nút PayOS",
     "pay_binance": "Nút Binance",
-    "binance": "Biểu tượng ví Binance",
+    "binance": "Biểu tượng ví",
     "order": "Biểu tượng đơn hàng",
-    "order_code": "Nhãn mã đơn hàng",
+    "order_code": "Nhãn mã đơn",
     "money": "Nhãn tiền/giá",
     "product": "Nhãn sản phẩm",
     "detail": "Nhãn chi tiết",
-    "back_pay": "Nút quay lại thanh toán",
+    "back_pay": "Nút quay lại TT",
     "back_menu": "Nút quay lại menu",
     "lang": "Biểu tượng ngôn ngữ",
     "account": "Biểu tượng tài khoản",
@@ -241,18 +236,36 @@ def button(text, callback_data=None, url=None, ui_key=None):
         if eid: kw["icon_custom_emoji_id"] = eid
     return InlineKeyboardButton(**kw)
 
-def extract_custom_emoji_from_message(message):
+
+def extract_custom_emoji(message):
+    """
+    Trích custom emoji đầu tiên.
+    Trả về (clean_text, emoji_id, emoji_char) - emoji_char là placeholder trong text gốc.
+    Nếu không có emoji: (text, None, None)
+    """
     text = message.text or message.caption or ""
     ents = message.entities or message.caption_entities or []
     ces = [e for e in ents if e.type == "custom_emoji"]
-    if not ces: return text, None
-    eid = ces[0].custom_emoji_id
-    if not eid or not eid.isdigit(): return text, None
+    if not ces:
+        return text, None, None
+
+    e = ces[0]
+    eid = e.custom_emoji_id
+    if not eid or not eid.isdigit():
+        return text, None, None
+
+    # Trích emoji char (placeholder) từ entity offset trong UTF-16
     enc = text.encode("utf-16-le")
-    for e in sorted(ces, key=lambda x: x.offset, reverse=True):
-        s, en = e.offset * 2, (e.offset + e.length) * 2
-        enc = enc[:s] + enc[en:]
-    return enc.decode("utf-16-le"), eid
+    s, en = e.offset * 2, (e.offset + e.length) * 2
+    emoji_char = enc[s:en].decode("utf-16-le")
+
+    # Xóa tất cả custom emoji khỏi text (từ cuối lên đầu để giữ offset)
+    for e2 in sorted(ces, key=lambda x: x.offset, reverse=True):
+        s2, en2 = e2.offset * 2, (e2.offset + e2.length) * 2
+        enc = enc[:s2] + enc[en2:]
+    clean = enc.decode("utf-16-le")
+    return clean, eid, emoji_char
+
 
 def product_name_html(name, emoji_id=None):
     safe = html.escape(name)
@@ -261,7 +274,9 @@ def product_name_html(name, emoji_id=None):
 
 async def validate_custom_emoji(bot, chat_id, emoji_id):
     try:
-        m = await bot.send_message(chat_id=chat_id, text=f'<tg-emoji emoji-id="{emoji_id}">🎁</tg-emoji>', parse_mode=ParseMode.HTML)
+        m = await bot.send_message(chat_id=chat_id,
+            text=f'<tg-emoji emoji-id="{emoji_id}">🎁</tg-emoji>',
+            parse_mode=ParseMode.HTML)
         await m.delete()
         return True
     except Exception as e:
@@ -295,17 +310,17 @@ def order_buttons(order_id, uid=None):
         [button(t(uid, "btn_cancel"), callback_data=f"cancel_{order_id}", ui_key="cancel")],
     ])
 
-def detail_buttons(product_id, uid=None):
+def detail_buttons(pid, uid=None):
     return InlineKeyboardMarkup([
-        [button(t(uid, "btn_buy"), callback_data=f"buy_{product_id}", ui_key="cart")],
+        [button(t(uid, "btn_buy"), callback_data=f"buy_{pid}", ui_key="cart")],
         [button(t(uid, "btn_back"), callback_data="back_list", ui_key="back")],
     ])
 
-def payment_buttons(order_id, uid=None):
+def payment_buttons(oid, uid=None):
     return InlineKeyboardMarkup([
-        [button(t(uid, "btn_pay_payos"), callback_data=f"pay_payos_{order_id}", ui_key="pay_payos")],
-        [button(t(uid, "btn_pay_binance"), callback_data=f"pay_binance_{order_id}", ui_key="pay_binance")],
-        [button(t(uid, "btn_cancel"), callback_data=f"cancel_{order_id}", ui_key="cancel")],
+        [button(t(uid, "btn_pay_payos"), callback_data=f"pay_payos_{oid}", ui_key="pay_payos")],
+        [button(t(uid, "btn_pay_binance"), callback_data=f"pay_binance_{oid}", ui_key="pay_binance")],
+        [button(t(uid, "btn_cancel"), callback_data=f"cancel_{oid}", ui_key="cancel")],
     ])
 
 def lang_buttons(uid=None):
@@ -321,24 +336,17 @@ def lang_buttons(uid=None):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     register_user(user.id, user.username, user.first_name, user.last_name)
-
     if not is_lang_set(user.id):
         await safe_reply(update.message, t(user.id, "lang_required"), reply_markup=lang_buttons(uid=user.id))
         return
-
     prods = list_products(limit=5, offset=0)
     if not prods:
-        await safe_reply(update.message, t(user.id, "shop_empty"))
-        return
+        await safe_reply(update.message, t(user.id, "shop_empty")); return
     header = ui_emoji_html("shop")
-    title = t(user.id, "shop_title")  # Không escape vì có thể chứa emoji
+    title = t(user.id, "shop_title")
     title_html = f"{header} <b>{title}</b>" if header else f"<b>{title}</b>"
-    prompt = t(user.id, "shop_prompt")  # Không escape
-    await safe_reply(
-        update.message,
-        f"{title_html}\n\n{prompt}",
-        reply_markup=product_buttons(prods, page=0, uid=user.id)
-    )
+    await safe_reply(update.message, f"{title_html}\n\n{t(user.id, 'shop_prompt')}",
+                     reply_markup=product_buttons(prods, page=0, uid=user.id))
 
 
 async def lang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,19 +361,14 @@ async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if lang not in ("vi", "en"): return
     uid = query.from_user.id
     set_user_lang(uid, lang)
-
     prods = list_products(limit=5, offset=0)
     if not prods:
-        await safe_edit(query, t(uid, "shop_empty"))
-        return
+        await safe_edit(query, t(uid, "shop_empty")); return
     header = ui_emoji_html("shop")
     title = t(uid, "shop_title")
     title_html = f"{header} <b>{title}</b>" if header else f"<b>{title}</b>"
-    await safe_edit(
-        query,
-        f"{title_html}\n\n{t(uid, 'shop_prompt')}",
-        reply_markup=product_buttons(prods, page=0, uid=uid)
-    )
+    await safe_edit(query, f"{title_html}\n\n{t(uid, 'shop_prompt')}",
+                    reply_markup=product_buttons(prods, page=0, uid=uid))
 
 
 async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -438,41 +441,36 @@ async def pay_payos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    try: order_code = int(query.data.split("_")[2])
+    try: oc = int(query.data.split("_")[2])
     except (ValueError, IndexError): return
-    order = get_order(order_code)
+    order = get_order(oc)
     if not order:
         await safe_edit(query, t(uid, "order_not_found"), reply_markup=None); return
     p = get_product(order["product_id"])
-    desc = f"DH{order_code}"
-    url, err = create_payment_link(order_code=order_code, amount=order["amount"],
+    desc = f"DH{oc}"
+    url, err = create_payment_link(order_code=oc, amount=order["amount"],
                                     description=desc, buyer_name=query.from_user.full_name)
     if not url:
         await safe_edit(query, f"Lỗi PayOS: {html.escape(str(err))}", reply_markup=None); return
     name_html = product_name_html(p["name"], p.get("emoji_id")) if p else str(order["product_id"])
-    order_icon = ui_emoji_html("order")
-    prod_icon = ui_emoji_html("product")
-    money_icon = ui_emoji_html("money")
-    code_icon = ui_emoji_html("order_code")
-    pay_icon = ui_emoji_html("pay_payos")
     text = (
-        f"{order_icon} <b>{t(uid, 'order_title')} #{order_code}</b>\n\n"
-        f"{prod_icon} <b>{t(uid, 'order_product')}:</b> {name_html}\n"
-        f"{money_icon} <b>{t(uid, 'order_amount')}:</b> {order['amount']:,} VND\n"
-        f"{code_icon} <b>{t(uid, 'order_content')}:</b> <code>DH{order_code}</code>\n\n"
-        f'{pay_icon} <a href="{url}">{t(uid, "order_pay")}</a>\n\n'
+        f"{ui_emoji_html('order')} <b>{t(uid, 'order_title')} #{oc}</b>\n\n"
+        f"{ui_emoji_html('product')} <b>{t(uid, 'order_product')}:</b> {name_html}\n"
+        f"{ui_emoji_html('money')} <b>{t(uid, 'order_amount')}:</b> {order['amount']:,} VND\n"
+        f"{ui_emoji_html('order_code')} <b>{t(uid, 'order_content')}:</b> <code>DH{oc}</code>\n\n"
+        f'{ui_emoji_html("pay_payos")} <a href="{url}">{t(uid, "order_pay")}</a>\n\n'
         f"{t(uid, 'order_hint')}"
     )
-    await safe_edit(query, text, reply_markup=order_buttons(order_code, uid=uid), disable_web_page_preview=True)
+    await safe_edit(query, text, reply_markup=order_buttons(oc, uid=uid), disable_web_page_preview=True)
 
 
 async def pay_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    try: order_code = int(query.data.split("_")[2])
+    try: oc = int(query.data.split("_")[2])
     except (ValueError, IndexError): return
-    order = get_order(order_code)
+    order = get_order(oc)
     if not order:
         await safe_edit(query, t(uid, "order_not_found"), reply_markup=None); return
     addr = get_binance_address()
@@ -480,24 +478,19 @@ async def pay_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await safe_edit(query, t(uid, "binance_not_set"), reply_markup=None); return
     net = get_binance_network(); rate = get_usdt_rate()
     usdt = round(order["amount"] / rate, 2)
-
-    order_icon = ui_emoji_html("order")
-    binance_icon = ui_emoji_html("binance")
-    money_icon = ui_emoji_html("money")
-    code_icon = ui_emoji_html("order_code")
     text = (
-        f"{binance_icon} <b>{t(uid, 'binance_title')}</b>\n"
-        f"{order_icon} #{order_code}\n\n"
-        f"{money_icon} <b>{t(uid, 'binance_amount')}:</b> <code>{usdt} USDT</code>\n"
+        f"{ui_emoji_html('binance')} <b>{t(uid, 'binance_title')}</b>\n"
+        f"{ui_emoji_html('order')} #{oc}\n\n"
+        f"{ui_emoji_html('money')} <b>{t(uid, 'binance_amount')}:</b> <code>{usdt} USDT</code>\n"
         f"<b>{t(uid, 'binance_address')}:</b>\n<code>{html.escape(addr)}</code>\n"
         f"<b>{t(uid, 'binance_network')}:</b> <b>{html.escape(net)}</b>\n"
-        f"{code_icon} <b>{t(uid, 'binance_memo')}:</b> <code>DH{order_code}</code>\n\n"
+        f"{ui_emoji_html('order_code')} <b>{t(uid, 'binance_memo')}:</b> <code>DH{oc}</code>\n\n"
         f"{t(uid, 'binance_note')}"
     )
     kb = InlineKeyboardMarkup([
-        [button(t(uid, "binance_sent"), callback_data=f"binance_sent_{order_code}", ui_key="check")],
-        [button(t(uid, "btn_back"), callback_data=f"backpay_{order_code}", ui_key="back")],
-        [button(t(uid, "btn_cancel"), callback_data=f"cancel_{order_code}", ui_key="cancel")],
+        [button(t(uid, "binance_sent"), callback_data=f"binance_sent_{oc}", ui_key="check")],
+        [button(t(uid, "btn_back"), callback_data=f"backpay_{oc}", ui_key="back")],
+        [button(t(uid, "btn_cancel"), callback_data=f"cancel_{oc}", ui_key="cancel")],
     ])
     await safe_edit(query, text, reply_markup=kb, disable_web_page_preview=True)
 
@@ -506,102 +499,89 @@ async def binance_sent_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    try: order_code = int(query.data.split("_")[2])
+    try: oc = int(query.data.split("_")[2])
     except (ValueError, IndexError): return
     await safe_edit(query, t(uid, "binance_waiting"), reply_markup=None)
-    order = get_order(order_code)
+    order = get_order(oc)
     if order:
         p = get_product(order["product_id"])
         usdt = round(order["amount"] / get_usdt_rate(), 2)
         admin_text = (
             f"<b>Yêu cầu xác nhận Binance</b>\n"
-            f"Order: <code>{order_code}</code>\n"
-            f"User: <code>{uid}</code>\n"
+            f"Order: <code>{oc}</code>\nUser: <code>{uid}</code>\n"
             f"SP: {html.escape(p['name']) if p else '?'}\n"
-            f"Số tiền: {order['amount']:,} VND ≈ {usdt} USDT\n\n"
-            f"Xác nhận: <code>/confirm {order_code}</code>"
+            f"Amount: {order['amount']:,} VND ≈ {usdt} USDT\n\n"
+            f"<code>/confirm {oc}</code>"
         )
         for aid in Config.ADMIN_IDS:
             try: await safe_send(context.bot, aid, admin_text)
-            except Exception as e: logger.error(f"Notify admin {aid}: {e}")
+            except Exception as e: logger.error(f"notify admin {aid}: {e}")
 
 
 async def back_pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    try: order_code = int(query.data.split("_")[1])
+    try: oc = int(query.data.split("_")[1])
     except (ValueError, IndexError): return
-    order = get_order(order_code)
+    order = get_order(oc)
     if not order:
         await safe_edit(query, t(uid, "order_not_found"), reply_markup=None); return
     p = get_product(order["product_id"])
     name_html = product_name_html(p["name"], p.get("emoji_id")) if p else "?"
-    order_icon = ui_emoji_html("order")
-    prod_icon = ui_emoji_html("product")
-    money_icon = ui_emoji_html("money")
     text = (
-        f"{order_icon} <b>{t(uid, 'order_title')} #{order_code}</b>\n\n"
-        f"{prod_icon} <b>{t(uid, 'order_product')}:</b> {name_html}\n"
-        f"{money_icon} <b>{t(uid, 'order_amount')}:</b> {order['amount']:,} VND\n\n"
+        f"{ui_emoji_html('order')} <b>{t(uid, 'order_title')} #{oc}</b>\n\n"
+        f"{ui_emoji_html('product')} <b>{t(uid, 'order_product')}:</b> {name_html}\n"
+        f"{ui_emoji_html('money')} <b>{t(uid, 'order_amount')}:</b> {order['amount']:,} VND\n\n"
         f"{t(uid, 'payment_method_title')}"
     )
-    await safe_edit(query, text, reply_markup=payment_buttons(order_code, uid=uid))
+    await safe_edit(query, text, reply_markup=payment_buttons(oc, uid=uid))
 
 
 async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    try: order_code = int(query.data.split("_")[1])
+    try: oc = int(query.data.split("_")[1])
     except (ValueError, IndexError):
         await safe_edit(query, t(uid, "invalid_data")); return
-    order = get_order(order_code)
+    order = get_order(oc)
     if not order:
         await safe_edit(query, t(uid, "order_not_found"), reply_markup=None); return
     if order["status"] == "paid":
-        await safe_edit(
-            query,
-            f"{t(uid, 'order_paid')}\n\n"
-            f"<b>{t(uid, 'account_info')}:</b>\n"
-            f"{format_key_display(order['key_assigned'] or '', get_user_lang(uid))}"
-        ); return
+        await safe_edit(query,
+            f"{t(uid, 'order_paid')}\n\n<b>{t(uid, 'account_info')}:</b>\n"
+            f"{format_key_display(order['key_assigned'] or '', get_user_lang(uid))}"); return
     if order["status"] == "cancelled":
         await safe_edit(query, t(uid, "order_cancelled"), reply_markup=None); return
 
-    data = get_payment_status(order_code)
+    data = get_payment_status(oc)
     paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
     if paid:
         key = get_available_key(order["product_id"])
         if key:
-            update_order_status(order_code, "paid", key)
-            await safe_edit(
-                query,
-                f"{t(uid, 'order_success')}\n\n"
-                f"<b>{t(uid, 'account_info')}:</b>\n"
-                f"{format_key_display(key, get_user_lang(uid))}"
-            )
+            update_order_status(oc, "paid", key)
+            await safe_edit(query,
+                f"{t(uid, 'order_success')}\n\n<b>{t(uid, 'account_info')}:</b>\n"
+                f"{format_key_display(key, get_user_lang(uid))}")
         else:
             await safe_edit(query, t(uid, "order_no_key"), reply_markup=None)
     else:
-        await safe_edit(
-            query,
-            f"#{order_code} {t(uid, 'order_pending')}",
-            reply_markup=order_buttons(order_code, uid=uid)
-        )
+        await safe_edit(query, f"#{oc} {t(uid, 'order_pending')}",
+                        reply_markup=order_buttons(oc, uid=uid))
 
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    try: order_code = int(query.data.split("_")[1])
+    try: oc = int(query.data.split("_")[1])
     except (ValueError, IndexError): return
-    order = get_order(order_code)
+    order = get_order(oc)
     if not order or order["status"] != "pending":
         await safe_edit(query, t(uid, "order_cannot_cancel")); return
-    update_order_status(order_code, "cancelled")
-    await safe_edit(query, f"{t(uid, 'order_cancelled_ok')} #{order_code}.")
+    update_order_status(oc, "cancelled")
+    await safe_edit(query, f"{t(uid, 'order_cancelled_ok')} #{oc}.")
 
 
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -611,12 +591,12 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = get_pending_orders_by_user(uid)
     if not orders:
         await safe_edit(query, t(uid, "pending_empty")); return
-    order_icon = ui_emoji_html("order")
-    text = f"{order_icon} <b>{t(uid, 'pending_title')}:</b>\n\n"
+    oi = ui_emoji_html("order")
+    text = f"{oi} <b>{t(uid, 'pending_title')}:</b>\n\n"
     for o in orders[:10]:
         p = get_product(o["product_id"])
         name = product_name_html(p["name"], p.get("emoji_id")) if p else "?"
-        text += f"{order_icon} #{o['id']} - {name} - {o['amount']:,} VND\n"
+        text += f"{oi} #{o['id']} - {name} - {o['amount']:,} VND\n"
     await safe_edit(query, text)
 
 
@@ -627,7 +607,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
         await safe_reply(update.message, "⛔"); return
     try:
-        clean, emoji_id = extract_custom_emoji_from_message(update.message)
+        clean, emoji_id, emoji_char = extract_custom_emoji(update.message)
         parts = clean.split(maxsplit=4)
         if len(parts) < 4:
             await safe_reply(update.message,
@@ -637,8 +617,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         np = parts[1]
         if "|" in np:
             name, description = np.split("|", 1); name, description = name.strip(), description.strip()
-        else:
-            name, description = np.strip(), ""
+        else: name, description = np.strip(), ""
         price_str, stock_str = parts[2], parts[3]
         keys_str = parts[4] if len(parts) >= 5 else "-"
         try:
@@ -646,8 +625,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if price <= 0: raise ValueError()
         except ValueError:
             await safe_reply(update.message, f"Giá lỗi: <code>{html.escape(price_str)}</code>"); return
-        keys_str = keys_str.strip()
-        is_num = False
+        keys_str = keys_str.strip(); is_num = False
         try: int(keys_str); is_num = True
         except ValueError: pass
         keys = [] if (keys_str in ("-", "") or is_num) else [k.strip() for k in keys_str.split(",") if k.strip()]
@@ -663,14 +641,13 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if emoji_id:
             ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
             if not ok:
-                emoji_note = "\n⚠️ Emoji không hiển thị được, đã bỏ."
+                emoji_note = "\n⚠️ Emoji bỏ qua (bot không sở hữu, cần mua username Fragment)"
                 emoji_id = None
         pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
-        preview = ""
-        if keys: preview = f"\n\n<b>Key mẫu:</b>\n{format_key_display(keys[0])}"
+        preview = f"\n\n<b>Key mẫu:</b>\n{format_key_display(keys[0])}" if keys else ""
         await safe_reply(update.message,
-            f"Đã thêm SP ID <code>{pid}</code>\n"
-            f"Tên: {html.escape(name)}\nGiá: {price:,} VND\nSL: {stock}\nKeys: {len(keys)}{emoji_note}{preview}")
+            f"Đã thêm SP <code>{pid}</code>\nTên: {html.escape(name)}\n"
+            f"Giá: {price:,} VND\nSL: {stock}\nKeys: {len(keys)}{emoji_note}{preview}")
     except Exception as e:
         logger.error(f"add: {e}", exc_info=True)
         await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
@@ -714,8 +691,7 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
         rpt += f"<code>{pid}</code> {html.escape(name)} - {price:,}đ - {stock}\n"
     if fail:
         rpt += "\n<b>Lỗi:</b>\n"
-        for ln, err in fail[:10]:
-            rpt += f"Dòng {ln}: {html.escape(err)}\n"
+        for ln, err in fail[:10]: rpt += f"Dòng {ln}: {html.escape(err)}\n"
     await safe_reply(update.message, rpt)
 
 
@@ -732,7 +708,8 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p = get_product(pid)
         if not p:
             await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>."); return
-        get_db().products.update_one({"id": pid}, {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}})
+        get_db().products.update_one({"id": pid},
+            {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}})
         await safe_reply(update.message, f"Đã thêm {len(new_keys)} key. Tồn mới: {p['stock'] + len(new_keys)}")
     except Exception as e:
         await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
@@ -741,7 +718,7 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
     try:
-        clean, emoji_id = extract_custom_emoji_from_message(update.message)
+        clean, emoji_id, _ = extract_custom_emoji(update.message)
         parts = clean.split()
         if len(parts) < 2:
             await safe_reply(update.message, "Cú pháp: <code>/setemoji &lt;id&gt; [emoji]</code>"); return
@@ -789,12 +766,10 @@ async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name_html = product_name_html(p["name"], p.get("emoji_id"))
         desc = html.escape(p.get("description") or "(không có mô tả)")
         keys = json.loads(p["keys"] or "[]")
-        text = (
-            f"<b>SP #{p['id']}</b>\nTên: {name_html}\nMô tả: {desc}\n"
-            f"Giá: {p['price']:,} VND\nKho: {p['stock']}\nBán: {p['sold']}\n"
-            f"Emoji ID: <code>{p.get('emoji_id') or 'chưa đặt'}</code>\n\n"
-            f"<b>Keys ({len(keys)}):</b>\n"
-        )
+        text = (f"<b>SP #{p['id']}</b>\nTên: {name_html}\nMô tả: {desc}\n"
+                f"Giá: {p['price']:,} VND\nKho: {p['stock']}\nBán: {p['sold']}\n"
+                f"Emoji ID: <code>{p.get('emoji_id') or 'chưa đặt'}</code>\n\n"
+                f"<b>Keys ({len(keys)}):</b>\n")
         for i, k in enumerate(keys[:10], 1):
             text += f"  {i}. {format_key_display(k)}\n"
         if len(keys) > 10: text += f"  <i>... và {len(keys) - 10} key khác</i>\n"
@@ -813,7 +788,7 @@ async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE
     for p in products:
         text += f"<code>{p['id']}</code> {html.escape(p['name'])[:30]} - {p['price']:,}đ - kho:{p['stock']} - bán:{p['sold']}\n"
     if total > 20:
-        text += f"\n<i>... và {total - 20} SP khác. Xem tiếp:</i> <code>/list2</code>"
+        text += f"\n<i>... và {total - 20} SP khác.</i> <code>/list2</code>"
     text += "\n\n<code>/detail &lt;id&gt;</code> - <code>/del &lt;id&gt;</code>"
     await safe_reply(update.message, text)
 
@@ -826,7 +801,7 @@ async def admin_list2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update.message, "Hết."); return
     text = f"<b>Trang 2/{(total - 1) // 20 + 1}:</b>\n\n"
     for p in products:
-        text += f"<code>{p['id']}</code> {html.escape(p['name'])[:30]} - {p['price']:,}đ - kho:{p['stock']}\n"
+        text += f"<code>{p['id']}</code> {html.escape(p['name'])[:30]} - {p['price']:,}đ\n"
     await safe_reply(update.message, text)
 
 
@@ -860,16 +835,16 @@ async def admin_confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         parts = update.message.text.split()
         if len(parts) < 2:
-            await safe_reply(update.message, "Cú pháp: <code>/confirm &lt;order_code&gt;</code>"); return
+            await safe_reply(update.message, "Cú pháp: <code>/confirm &lt;oc&gt;</code>"); return
         oc = int(parts[1])
         order = get_order(oc)
         if not order:
             await safe_reply(update.message, "Không tìm thấy đơn."); return
         if order["status"] != "pending":
-            await safe_reply(update.message, f"Đơn ở trạng thái <b>{order['status']}</b>."); return
+            await safe_reply(update.message, f"Trạng thái <b>{order['status']}</b>."); return
         key = get_available_key(order["product_id"])
         if not key:
-            await safe_reply(update.message, "Hết key. Nạp trước."); return
+            await safe_reply(update.message, "Hết key."); return
         update_order_status(oc, "paid", key)
         await safe_reply(update.message, f"Đã xác nhận đơn <code>{oc}</code>.")
         lang = get_user_lang(order["user_id"])
@@ -887,17 +862,16 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
     parts = update.message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await safe_reply(update.message, "Cú pháp: <code>/broadcast &lt;nội dung&gt;</code>"); return
+        await safe_reply(update.message, "Cú pháp: <code>/broadcast &lt;msg&gt;</code>"); return
     msg = parts[1]
-    users = get_all_user_ids()
-    sent, fail = 0, 0
+    users = get_all_user_ids(); sent, fail = 0, 0
     for uid in users:
         try:
             await safe_send(context.bot, uid, msg, disable_web_page_preview=True)
             sent += 1; await asyncio.sleep(0.05)
         except Exception as e:
-            fail += 1; logger.warning(f"broadcast {uid}: {e}")
-    await safe_reply(update.message, f"Broadcast xong. ✅ {sent} | ❌ {fail}")
+            fail += 1; logger.warning(f"bc {uid}: {e}")
+    await safe_reply(update.message, f"Broadcast. ✅ {sent} | ❌ {fail}")
 
 
 # ============================================================
@@ -906,7 +880,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
     try:
-        clean, emoji_id = extract_custom_emoji_from_message(update.message)
+        clean, emoji_id, _ = extract_custom_emoji(update.message)
         parts = clean.split()
         if len(parts) < 2:
             txt = "<b>Cú pháp:</b> <code>/setui &lt;key&gt; [emoji]</code>\n\n<b>UI keys:</b>\n"
@@ -916,14 +890,14 @@ async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key not in UI_KEYS:
             await safe_reply(update.message, f"Key lỗi: <code>{html.escape(key)}</code>"); return
         if not emoji_id:
-            await safe_reply(update.message, "Không tìm thấy custom emoji."); return
+            await safe_reply(update.message, "Không tìm thấy emoji."); return
         ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
         if not ok:
             await safe_reply(update.message,
-                "⚠️ Bot không có quyền dùng emoji này.\n"
-                f"Nếu vẫn muốn lưu: <code>/setui_force {key} [emoji]</code>"); return
+                "⚠️ Bot không sở hữu emoji này (cần Fragment).\n"
+                f"Ép lưu: <code>/setui_force {key} [emoji]</code>"); return
         set_setting(f"ui_{key}", emoji_id)
-        await safe_reply(update.message, f"✅ Đã đặt emoji cho <code>{key}</code>.")
+        await safe_reply(update.message, f"✅ Đã đặt emoji <code>{key}</code>.")
     except Exception as e:
         await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
@@ -931,7 +905,7 @@ async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_setui_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
     try:
-        clean, emoji_id = extract_custom_emoji_from_message(update.message)
+        clean, emoji_id, _ = extract_custom_emoji(update.message)
         parts = clean.split()
         if len(parts) < 2 or not emoji_id:
             await safe_reply(update.message, "Cú pháp: <code>/setui_force &lt;key&gt; [emoji]</code>"); return
@@ -939,7 +913,7 @@ async def admin_setui_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key not in UI_KEYS:
             await safe_reply(update.message, "Key lỗi."); return
         set_setting(f"ui_{key}", emoji_id)
-        await safe_reply(update.message, f"⚠️ Ép lưu emoji cho <code>{key}</code>.")
+        await safe_reply(update.message, f"⚠️ Ép lưu emoji <code>{key}</code>.")
     except Exception as e:
         await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
@@ -967,108 +941,101 @@ async def admin_delui(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ADMIN - TEXTS (HỖ TRỢ EMOJI)
+# ADMIN - TEXTS (EMOJI SUPPORT)
 # ============================================================
 TEXT_KEYS_INFO = {
-    "shop_empty": "Thông báo shop trống",
-    "shop_title": "Tiêu đề shop",
-    "shop_prompt": "Dòng 'Chọn sản phẩm...'",
-    "pending_empty": "Khi user không có đơn chờ",
-    "pending_title": "Tiêu đề đơn hàng chờ",
-    "order_hint": "Hướng dẫn sau thanh toán",
-    "order_success": "Thông báo thành công",
-    "order_paid": "Đơn đã thanh toán",
-    "binance_note": "Lưu ý Binance",
-    "binance_title": "Tiêu đề Binance",
-    "lang_required": "Yêu cầu chọn ngôn ngữ",
-    "lang_choose": "Chọn ngôn ngữ",
-    "lang_changed": "Đã đổi ngôn ngữ",
-    "payment_method_title": "Chọn phương thức TT",
-    "account_info": "Thông tin tài khoản",
+    "shop_empty": "Shop trống", "shop_title": "Tiêu đề shop",
+    "shop_prompt": "Chọn sản phẩm...", "pending_empty": "Đơn chờ trống",
+    "pending_title": "Tiêu đề đơn chờ", "order_hint": "Hướng dẫn TT",
+    "order_success": "TT thành công", "order_paid": "Đơn đã TT",
+    "binance_note": "Lưu ý Binance", "binance_title": "Tiêu đề Binance",
+    "lang_required": "Yêu cầu lang", "lang_choose": "Chọn lang",
+    "lang_changed": "Đã đổi lang", "payment_method_title": "Chọn PTTT",
+    "account_info": "Thông tin TK",
 }
 
 
 async def admin_settext(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Cú pháp: /settext <vi|en> <key> [dán emoji nếu muốn] <value>
-    Emoji nếu có sẽ được hiển thị ở đầu text.
-    Không dán emoji mới → giữ emoji cũ.
+    /settext <vi|en> <key> [emoji] <value>
+    - Có emoji → validate, nếu bot không sở hữu → vẫn lưu + cảnh báo
+    - emoji_char giữ nguyên làm fallback (hiển thị đúng emoji user muốn)
     """
     if update.effective_user.id not in Config.ADMIN_IDS: return
     try:
-        clean, emoji_id = extract_custom_emoji_from_message(update.message)
+        clean, emoji_id, emoji_char = extract_custom_emoji(update.message)
         parts = clean.split(maxsplit=3)
         if len(parts) < 4:
-            txt = "Cú pháp: <code>/settext &lt;vi|en&gt; &lt;key&gt; [emoji] &lt;value&gt;</code>\n\n"
-            txt += "<b>Ví dụ:</b>\n"
-            txt += "<code>/settext vi shop_title 🏪 Cửa hàng QC VN</code>\n"
-            txt += "<code>/settext vi shop_empty Không có SP</code> (giữ emoji cũ)\n\n"
-            txt += "<b>Key có thể chỉnh:</b>\n"
-            txt += "\n".join(f"• <code>{k}</code> - {v}" for k, v in TEXT_KEYS_INFO.items())
+            txt = ("Cú pháp: <code>/settext &lt;vi|en&gt; &lt;key&gt; [emoji] &lt;value&gt;</code>\n\n"
+                   "<b>Ví dụ:</b>\n"
+                   "<code>/settext vi shop_title 🏪 Cửa hàng QC VN</code>\n"
+                   "<code>/settext vi shop_empty Không có SP</code>\n\n"
+                   "<b>Key:</b>\n" + "\n".join(f"• <code>{k}</code> - {v}" for k, v in TEXT_KEYS_INFO.items()))
             await safe_reply(update.message, txt); return
-
         lang, key, value = parts[1].lower(), parts[2].lower(), parts[3]
         if lang not in ("vi", "en"):
-            await safe_reply(update.message, "Lang phải là vi/en."); return
+            await safe_reply(update.message, "Lang phải vi/en."); return
         if key not in TEXT_KEYS_INFO:
             await safe_reply(update.message, f"Key không hợp lệ: <code>{html.escape(key)}</code>"); return
 
-        # Nếu có emoji mới → validate
-        validate_note = ""
+        note = ""
         if emoji_id:
             ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
             if not ok:
-                validate_note = "\n⚠️ Emoji không hiển thị được (bot không sở hữu). Vẫn lưu nhưng fallback."
-            set_text(f"{lang}_{key}", value, emoji_id=emoji_id)
+                note = ("\n\n⚠️ <b>Bot không sở hữu emoji này.</b>\n"
+                        "Khi hiển thị, emoji sẽ ở dạng tĩnh (không animation).\n"
+                        "Muốn animation → mua username Fragment cho bot.")
+            set_text(f"{lang}_{key}", value, emoji_id=emoji_id, emoji_char=emoji_char)
         else:
             set_text(f"{lang}_{key}", value, keep_emoji=True)
 
-        saved_value, saved_eid = get_text_raw(f"{lang}_{key}")
-        preview_emoji = ""
-        if saved_eid:
-            preview_emoji = f'<tg-emoji emoji-id="{saved_eid}">🎁</tg-emoji> '
+        # Preview từ raw
+        raw = get_text_raw(f"{lang}_{key}")
+        preview_eid = raw.get("emoji_id") if raw else None
+        preview_ec = raw.get("emoji_char") if raw else None
+        preview = ""
+        if preview_eid:
+            preview = f'<tg-emoji emoji-id="{preview_eid}">{preview_ec or "🎁"}</tg-emoji> '
+        elif preview_ec:
+            preview = f'{preview_ec} '
 
         await safe_reply(update.message,
-            f"✅ Đã đổi <code>{lang}_{key}</code>:\n\n"
-            f"{preview_emoji}{html.escape(saved_value or '')}{validate_note}")
+            f"✅ Đã đổi <code>{lang}_{key}</code>:\n\n{preview}{html.escape(value)}{note}")
     except Exception as e:
+        logger.error(f"settext: {e}", exc_info=True)
         await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 async def admin_deltext_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cú pháp: /deltextemoji <lang> <key> - xóa emoji của text"""
     if update.effective_user.id not in Config.ADMIN_IDS: return
     parts = update.message.text.split()
     if len(parts) < 3:
         await safe_reply(update.message, "Cú pháp: <code>/deltextemoji &lt;vi|en&gt; &lt;key&gt;</code>"); return
     lang, key = parts[1].lower(), parts[2].lower()
-    if lang not in ("vi", "en"):
-        await safe_reply(update.message, "Lang phải vi/en."); return
-    cur, _ = get_text_raw(f"{lang}_{key}")
-    if cur is None:
-        await safe_reply(update.message, "Text chưa được set."); return
-    set_text(f"{lang}_{key}", cur, keep_emoji=False)
+    raw = get_text_raw(f"{lang}_{key}")
+    if raw is None:
+        await safe_reply(update.message, "Text chưa set."); return
+    set_text(f"{lang}_{key}", raw.get("value") or "", keep_emoji=False)
     await safe_reply(update.message, f"Đã xóa emoji của <code>{lang}_{key}</code>.")
 
 
 async def admin_viewtext(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
     ov = get_all_texts()
-    text = "<b>Texts override hiện tại:</b>\n\n"
+    text = "<b>Texts override:</b>\n\n"
     if not ov:
         text += "<i>Chưa có override nào.</i>\n\n"
     else:
         for it in ov:
             k = it["key"]; v = it.get("value") or ""
-            eid = it.get("emoji_id")
-            emoji_preview = f'<tg-emoji emoji-id="{eid}">🎁</tg-emoji> ' if eid else ""
-            text += f"• <code>{k}</code>\n  {emoji_preview}<i>{html.escape(v[:80])}</i>\n"
-    text += "\n<b>Key có thể chỉnh:</b>\n"
-    for k, d in TEXT_KEYS_INFO.items():
-        text += f"• <code>{k}</code> - {d}\n"
-    text += "\nĐặt: <code>/settext vi shop_title [emoji] Nội dung</code>\n"
-    text += "Xóa emoji: <code>/deltextemoji vi shop_title</code>\n"
-    text += "Xóa cả text: <code>/deltext vi shop_title</code>"
+            eid = it.get("emoji_id"); ec = it.get("emoji_char") or "🎁"
+            ep = f'<tg-emoji emoji-id="{eid}">{ec}</tg-emoji> ' if eid else (f'{ec} ' if it.get("emoji_char") else "")
+            text += f"• <code>{k}</code>\n  {ep}<i>{html.escape(v[:80])}</i>\n"
+    text += "\n<b>Key:</b>\n" + "\n".join(f"• <code>{k}</code> - {d}" for k, d in TEXT_KEYS_INFO.items())
+    text += "\n\n<b>Cú pháp:</b>\n"
+    text += "<code>/settext vi shop_title [emoji] Value</code>\n"
+    text += "<code>/deltextemoji vi shop_title</code>\n"
+    text += "<code>/deltext vi shop_title</code>"
     await safe_reply(update.message, text)
 
 
@@ -1091,8 +1058,7 @@ async def admin_setbinance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(parts) < 2:
         await safe_reply(update.message,
             "Cú pháp: <code>/setbinance &lt;address&gt; [TRC20|BEP20|ERC20|POLYGON]</code>"); return
-    addr = parts[1]
-    net = parts[2].upper() if len(parts) >= 3 else "TRC20"
+    addr = parts[1]; net = parts[2].upper() if len(parts) >= 3 else "TRC20"
     if net not in ("TRC20", "BEP20", "ERC20", "POLYGON"):
         await safe_reply(update.message, "Network không hợp lệ."); return
     set_binance_address(addr); set_binance_network(net)
@@ -1103,7 +1069,7 @@ async def admin_setrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
     parts = update.message.text.split()
     if len(parts) < 2:
-        await safe_reply(update.message, f"Tỷ giá: <code>{get_usdt_rate():,}</code>. Đặt: <code>/setrate 25000</code>"); return
+        await safe_reply(update.message, f"Rate hiện tại: <code>{get_usdt_rate():,}</code>. Đặt: <code>/setrate 25000</code>"); return
     try:
         r = int(parts[1].replace(".", "").replace(",", ""))
         if r <= 0: raise ValueError()
@@ -1126,7 +1092,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update.message,
         f"<b>Stats</b>\nUsers: <code>{count_users()}</code>\n"
         f"SP: <code>{count_all_products()}</code>\nCòn: <code>{count_products()}</code>\n"
-        f"Ví Binance: <code>{html.escape(get_binance_address()) or 'chưa'}</code>\n"
+        f"Binance: <code>{html.escape(get_binance_address()) or 'chưa'}</code>\n"
         f"Network: <b>{get_binance_network()}</b>\nRate: <code>{get_usdt_rate():,}</code>")
 
 
@@ -1137,30 +1103,20 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Sản phẩm:</b>\n"
         "<code>/add Tên Giá SL [Keys]</code>\n"
         "<code>/add Tên|Mô_tả Giá SL [Keys]</code>\n"
-        "Gửi file <b>.txt</b> để import\n"
-        "<code>/list</code> / <code>/list2</code>\n"
+        "File .txt để import\n<code>/list</code> / <code>/list2</code>\n"
         "<code>/detail &lt;id&gt;</code> / <code>/del &lt;id&gt;</code>\n"
         "<code>/delall confirm</code>\n\n"
-        "<b>Keys:</b>\n"
-        "<code>/addkey &lt;id&gt; K1,K2</code>\n"
-        "<code>/setdesc &lt;id&gt; Mô tả</code>\n"
-        "<code>/setemoji &lt;id&gt; [emoji]</code>\n\n"
-        "<b>Binance:</b>\n"
-        "<code>/setbinance &lt;address&gt; [network]</code>\n"
-        "<code>/setrate &lt;VND_per_USDT&gt;</code>\n"
-        "<code>/viewbinance</code> / <code>/confirm &lt;order&gt;</code>\n\n"
-        "<b>UI Emoji:</b>\n"
-        "<code>/setui &lt;key&gt; [emoji]</code>\n"
-        "<code>/setui_force &lt;key&gt; [emoji]</code>\n"
-        "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n\n"
+        "<b>Keys:</b>\n<code>/addkey &lt;id&gt; K1,K2</code>\n"
+        "<code>/setdesc &lt;id&gt; Mô tả</code>\n<code>/setemoji &lt;id&gt; [emoji]</code>\n\n"
+        "<b>Binance:</b>\n<code>/setbinance &lt;addr&gt; [net]</code>\n"
+        "<code>/setrate &lt;vnd&gt;</code>\n<code>/viewbinance</code> / <code>/confirm &lt;oc&gt;</code>\n\n"
+        "<b>UI Emoji:</b>\n<code>/setui &lt;key&gt; [emoji]</code>\n"
+        "<code>/setui_force</code> / <code>/viewui</code> / <code>/delui</code>\n\n"
         "<b>Texts (có emoji):</b>\n"
         "<code>/settext &lt;vi|en&gt; &lt;key&gt; [emoji] &lt;value&gt;</code>\n"
-        "<code>/viewtext</code>\n"
-        "<code>/deltextemoji &lt;lang&gt; &lt;key&gt;</code>\n"
+        "<code>/viewtext</code>\n<code>/deltextemoji &lt;lang&gt; &lt;key&gt;</code>\n"
         "<code>/deltext &lt;lang&gt; &lt;key&gt;</code>\n\n"
-        "<b>Khác:</b>\n"
-        "<code>/broadcast &lt;msg&gt;</code>\n"
-        "<code>/stats</code>"
+        "<b>Khác:</b>\n<code>/broadcast &lt;msg&gt;</code>\n<code>/stats</code>"
     )
     await safe_reply(update.message, txt)
 
@@ -1187,7 +1143,7 @@ async def telegram_webhook(request: Request):
         await request.app["bot_app"].process_update(update)
         return Response(text="OK", status=200)
     except Exception as e:
-        logger.error(f"tg webhook: {e}", exc_info=True)
+        logger.error(f"tg wh: {e}", exc_info=True)
         return Response(status=500, text="Error")
 
 async def payos_webhook(request: Request):
@@ -1220,7 +1176,7 @@ async def payos_webhook(request: Request):
                         logger.error(f"notify: {e}")
         return Response(text="OK", status=200)
     except Exception as e:
-        logger.error(f"payos webhook: {e}", exc_info=True)
+        logger.error(f"payos wh: {e}", exc_info=True)
         return Response(status=200, text="OK")
 
 
