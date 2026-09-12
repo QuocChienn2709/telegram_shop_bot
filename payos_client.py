@@ -21,7 +21,9 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
           "description": payload["description"], "orderCode": payload["orderCode"],
           "returnUrl": payload["returnUrl"]}
     sign_str = "&".join(f"{k}={sd[k]}" for k in sorted(sd.keys()))
-    payload["signature"] = hmac.new(Config.PAYOS_CHECKSUM_KEY.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+    payload["signature"] = hmac.new(
+        Config.PAYOS_CHECKSUM_KEY.encode(), sign_str.encode(), hashlib.sha256
+    ).hexdigest()
     try:
         r = requests.post(f"{PAYOS_BASE_URL}/payment-requests", headers=headers, json=payload, timeout=10)
         d = r.json()
@@ -36,7 +38,8 @@ def verify_payment_webhook(body, sig_header=None):
     try:
         data = body.get("data", {})
         sig = (body.get("signature") or sig_header or "").strip()
-        if not data or not sig: return False
+        if not data or not sig:
+            return False
         kb = Config.PAYOS_CHECKSUM_KEY.encode()
         for s in [
             json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False),
@@ -53,9 +56,11 @@ def verify_payment_webhook(body, sig_header=None):
 
 def get_payment_status(order_code):
     try:
-        r = requests.get(f"{PAYOS_BASE_URL}/payment-requests/{order_code}",
-                         headers={"x-client-id": Config.PAYOS_CLIENT_ID, "x-api-key": Config.PAYOS_API_KEY},
-                         timeout=10)
+        r = requests.get(
+            f"{PAYOS_BASE_URL}/payment-requests/{order_code}",
+            headers={"x-client-id": Config.PAYOS_CLIENT_ID, "x-api-key": Config.PAYOS_API_KEY},
+            timeout=10
+        )
         return r.json()
     except Exception as e:
         logger.error(f"get_payment_status: {e}")
