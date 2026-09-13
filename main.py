@@ -1249,16 +1249,25 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. <code>#{o['id']}</code> - {name} - {o['amount']:,} VND{status_icon}\n"
 
         if o["status"] == "pending":
-            pay_label = f"{t(uid, 'btn_pay_again')} #{short_code}"
-            del_label = f"{t(uid, 'btn_delete_order')} #{short_code}"
+            # 2 hàng riêng cho mỗi đơn — tránh bị cắt chữ
             kb_rows.append([
-                InlineKeyboardButton(pay_label, callback_data=f"backpay_{o['id']}"),
-                InlineKeyboardButton(del_label, callback_data=f"del_order_{o['id']}"),
+                InlineKeyboardButton(
+                    f"{t(uid, 'btn_pay_again')} #{short_code}",
+                    callback_data=f"backpay_{o['id']}"
+                ),
+            ])
+            kb_rows.append([
+                InlineKeyboardButton(
+                    f"{t(uid, 'btn_delete_order')} #{short_code}",
+                    callback_data=f"del_order_{o['id']}"
+                ),
             ])
         else:
-            recheck_label = f"{t(uid, 'btn_recheck_order')} #{short_code}"
             kb_rows.append([
-                InlineKeyboardButton(recheck_label, callback_data=f"recheck_{o['id']}"),
+                InlineKeyboardButton(
+                    f"{t(uid, 'btn_recheck_order')} #{short_code}",
+                    callback_data=f"recheck_{o['id']}"
+                ),
             ])
 
     text += f"\n<i>{html.escape(t(uid, 'pending_hint'))}</i>"
