@@ -32,6 +32,7 @@ def init_db():
         db.products.create_index([("id", ASCENDING)], unique=True)
         db.orders.create_index([("order_code", ASCENDING)], unique=True)
         db.orders.create_index([("user_id", ASCENDING)])
+        db.orders.create_index([("email_status", ASCENDING)])
         db.users.create_index([("user_id", ASCENDING)], unique=True)
         db.settings.create_index([("key", ASCENDING)], unique=True)
         db.texts.create_index([("key", ASCENDING)], unique=True)
@@ -42,16 +43,25 @@ def _next_id(name):
     db = _get_db()
     return db.counters.find_one_and_update({"_id": name}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)["seq"]
 
+# ============================================================
 # PRODUCTS
-def add_product(name, description, price, stock, keys_list, emoji_id=None):
+# ============================================================
+def add_product(name, description, price, stock, keys_list, emoji_id=None, requires_email=False):
     db = _get_db()
     nid = _next_id("products")
     db.products.insert_one({
         "_id": nid, "id": nid, "name": name, "description": description or "",
         "price": int(price), "stock": int(stock), "keys": list(keys_list or []),
-        "sold": 0, "emoji_id": emoji_id, "created_at": datetime.utcnow(),
+        "sold": 0, "emoji_id": emoji_id, "requires_email": bool(requires_email),
+        "created_at": datetime.utcnow(),
     })
     return nid
+
+def set_product_requires_email(product_id, requires: bool):
+    _get_db().products.update_one(
+        {"id": int(product_id)},
+        {"$set": {"requires_email": bool(requires)}}
+    )
 
 def delete_product(pid):
     return _get_db().products.delete_one({"id": int(pid)}).deleted_count > 0
@@ -66,7 +76,7 @@ def get_product(pid):
 def list_products(limit=5, offset=0):
     cur = _get_db().products.find(
         {"stock": {"$gt": 0}},
-        {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1, "emoji_id": 1}
+        {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1, "emoji_id": 1, "requires_email": 1}
     ).sort("id", ASCENDING).skip(int(offset)).limit(int(limit))
     return [_normalize_product(d) for d in cur]
 
@@ -95,10 +105,13 @@ def _normalize_product(doc):
     if not doc: return None
     d = dict(doc)
     d["keys"] = json.dumps(d.get("keys") or [])
+    d.setdefault("requires_email", False)
     if "_id" in d and "id" not in d: d["id"] = d["_id"]
     return d
 
+# ============================================================
 # ORDERS
+# ============================================================
 def create_order(order_id, user_id, product_id, quantity, amount, payment_method="payos"):
     db = _get_db()
     try:
@@ -107,7 +120,8 @@ def create_order(order_id, user_id, product_id, quantity, amount, payment_method
             "user_id": int(user_id), "product_id": int(product_id),
             "quantity": int(quantity), "amount": int(amount),
             "status": "pending", "payment_method": payment_method,
-            "key_assigned": None, "created_at": datetime.utcnow(), "paid_at": None,
+            "key_assigned": None, "customer_email": None, "email_status": None,
+            "created_at": datetime.utcnow(), "paid_at": None,
         })
     except DuplicateKeyError:
         pass
@@ -128,6 +142,26 @@ def update_order_status(order_id, status, key_assigned=None):
         upd["$set"]["paid_at"] = datetime.utcnow()
     _get_db().orders.update_one({"order_code": int(order_id)}, upd)
 
+def set_order_email(order_code, email):
+    _get_db().orders.update_one(
+        {"order_code": int(order_code)},
+        {"$set": {"customer_email": email, "email_status": "pending_admin"}}
+    )
+
+def set_order_email_status(order_code, status):
+    _get_db().orders.update_one(
+        {"order_code": int(order_code)},
+        {"$set": {"email_status": status}}
+    )
+
+def get_awaiting_email_order(user_id):
+    """Order mới nhất đang chờ email của user."""
+    doc = _get_db().orders.find_one(
+        {"user_id": int(user_id), "email_status": "awaiting", "status": "paid"},
+        sort=[("created_at", DESCENDING)]
+    )
+    return _normalize_order(doc) if doc else None
+
 def get_pending_orders_by_user(user_id):
     cur = _get_db().orders.find({"user_id": int(user_id), "status": "pending"}).sort("created_at", DESCENDING)
     return [_normalize_order(d) for d in cur]
@@ -136,9 +170,13 @@ def _normalize_order(doc):
     if not doc: return None
     d = dict(doc)
     d["id"] = d.get("order_code") or d.get("_id")
+    d.setdefault("customer_email", None)
+    d.setdefault("email_status", None)
     return d
 
+# ============================================================
 # USERS
+# ============================================================
 def register_user(user_id, username=None, first_name=None, last_name=None):
     _get_db().users.update_one(
         {"user_id": int(user_id)},
@@ -170,7 +208,9 @@ def get_all_user_ids():
 def count_users():
     return _get_db().users.count_documents({})
 
+# ============================================================
 # SETTINGS
+# ============================================================
 def get_setting(key):
     doc = _get_db().settings.find_one({"key": key})
     return doc.get("emoji_id") if doc else None
@@ -184,7 +224,9 @@ def delete_setting(key):
 def get_all_settings():
     return list(_get_db().settings.find({}, {"key": 1, "emoji_id": 1, "_id": 0}))
 
+# ============================================================
 # TEXTS
+# ============================================================
 def get_text(key, default=""):
     doc = _get_db().texts.find_one({"key": key})
     return doc.get("value") if doc and doc.get("value") is not None else default
@@ -198,7 +240,9 @@ def delete_text(key):
 def get_all_texts():
     return list(_get_db().texts.find({}, {"key": 1, "value": 1, "_id": 0}))
 
+# ============================================================
 # BINANCE
+# ============================================================
 def get_binance_address(): return get_text("binance_address", "")
 def set_binance_address(a): set_text("binance_address", a)
 def get_binance_network(): return get_text("binance_network", "TRC20")
