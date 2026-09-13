@@ -83,7 +83,6 @@ def set_product_requires_email(product_id, requires):
 
 
 def decrement_stock(pid):
-    """Giảm stock 1, tăng sold 1 — dùng cho email flow (không trả key)."""
     _get_db().products.update_one(
         {"id": int(pid), "stock": {"$gt": 0}},
         {"$inc": {"stock": -1, "sold": 1}}
@@ -199,9 +198,10 @@ def update_order_status(order_id, status, key_assigned=None):
 
 
 def set_order_email(order_code, email):
+    """Lưu email tạm — chờ user bấm xác nhận mới gửi admin."""
     _get_db().orders.update_one(
         {"order_code": int(order_code)},
-        {"$set": {"customer_email": email, "email_status": "pending_admin"}}
+        {"$set": {"customer_email": email, "email_status": "awaiting_user_confirm"}}
     )
 
 
@@ -213,8 +213,13 @@ def set_order_email_status(order_code, status):
 
 
 def get_awaiting_email_order(user_id):
+    """Order đang chờ email hoặc chờ user xác nhận."""
     doc = _get_db().orders.find_one(
-        {"user_id": int(user_id), "email_status": "awaiting", "status": "paid"},
+        {
+            "user_id": int(user_id),
+            "email_status": {"$in": ["awaiting", "awaiting_user_confirm"]},
+            "status": "paid",
+        },
         sort=[("created_at", DESCENDING)]
     )
     return _normalize_order(doc) if doc else None
