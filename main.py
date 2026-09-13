@@ -176,6 +176,9 @@ DEFAULT_TEXTS = {
         "btn_cancel": "Hủy đơn",
         "btn_back_pay": "Quay lại thanh toán",
         "btn_back_menu": "Quay lại menu",
+        "btn_back_shop": "Quay lại menu",
+        "btn_pay_again": "Thanh toán",
+        "btn_delete_order": "Xóa đơn",
         "btn_refresh": "Load lại",
         "btn_lang": "Ngôn ngữ",
         "btn_lang_short": "Đổi ngôn ngữ",
@@ -206,6 +209,7 @@ DEFAULT_TEXTS = {
         "order_cancelled_ok": "Đã hủy đơn hàng",
         "pending_title": "Đơn hàng chờ thanh toán",
         "pending_empty": "Bạn không có đơn hàng nào đang chờ.",
+        "pending_hint": "Nhấn 'Thanh toán' để tiếp tục hoặc 'Xóa đơn' để hủy.",
         "account_info": "Thông tin tài khoản",
         "account_user": "Tài khoản",
         "account_pass": "Mật khẩu",
@@ -255,6 +259,9 @@ DEFAULT_TEXTS = {
         "btn_cancel": "Cancel order",
         "btn_back_pay": "Back to payment",
         "btn_back_menu": "Back to menu",
+        "btn_back_shop": "Back to menu",
+        "btn_pay_again": "Pay",
+        "btn_delete_order": "Delete",
         "btn_refresh": "Refresh",
         "btn_lang": "Language",
         "btn_lang_short": "Change language",
@@ -285,6 +292,7 @@ DEFAULT_TEXTS = {
         "order_cancelled_ok": "Order cancelled",
         "pending_title": "Pending orders",
         "pending_empty": "You have no pending orders.",
+        "pending_hint": "Tap 'Pay' to continue or 'Delete' to cancel.",
         "account_info": "Account info",
         "account_user": "Username",
         "account_pass": "Password",
@@ -342,6 +350,7 @@ TEXT_EMOJI_KEYS = {
     "shop_prompt": "Dòng 'Chọn sản phẩm...'",
     "pending_empty": "Khi user không có đơn chờ",
     "pending_title": "Tiêu đề danh sách đơn chờ",
+    "pending_hint": "Hướng dẫn trong menu đơn chờ",
     "order_hint": "Hướng dẫn sau thanh toán",
     "order_success": "Thông báo thành công",
     "order_paid": "Đơn đã thanh toán",
@@ -486,6 +495,7 @@ UI_KEYS = {
     "email": "Biểu tượng email",
     "send": "Biểu tượng gửi",
     "confirm": "Biểu tượng xác nhận",
+    "delete": "Biểu tượng xóa",
 }
 
 
@@ -558,7 +568,7 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
 
 
 # ============================================================
-# BUTTON BUILDERS (UPDATED: thêm refresh + lang)
+# BUTTON BUILDERS
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
     kb = []
@@ -569,7 +579,6 @@ def product_buttons(products, page=0, per_page=5, uid=None):
             kw["icon_custom_emoji_id"] = p["emoji_id"]
         kb.append([InlineKeyboardButton(**kw)])
 
-    # Hàng điều hướng: Trước | Load lại | Sau
     nav = []
     if page > 0:
         nav.append(button(t(uid, "btn_prev"), callback_data=f"page_{page-1}", ui_key="prev"))
@@ -579,7 +588,6 @@ def product_buttons(products, page=0, per_page=5, uid=None):
     if nav:
         kb.append(nav)
 
-    # Hàng dưới: Đơn hàng chờ | Ngôn ngữ
     kb.append([
         button(t(uid, "btn_orders"), callback_data="my_orders", ui_key="orders"),
         button(t(uid, "btn_lang"), callback_data="menu_lang", ui_key="lang"),
@@ -745,7 +753,6 @@ async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def menu_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Hiện bảng chọn ngôn ngữ ngay trong menu sản phẩm."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -758,10 +765,8 @@ async def menu_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def refresh_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Load lại danh sách sản phẩm — không cần /start."""
     query = update.callback_query
     uid = query.from_user.id
-    # Trả lời ngay để user thấy phản hồi tức thì
     try:
         await query.answer(t(uid, "refreshed"), show_alert=False)
     except Exception:
@@ -1104,21 +1109,84 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_edit(query, f"{t_html(uid, 'order_cancelled_ok')} #{order_code}.")
 
 
+# ============================================================
+# ĐƠN HÀNG CHỜ - CẢI TIẾN
+# ============================================================
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Danh sách đơn hàng chờ + mỗi đơn có nút thanh toán/xóa."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
     orders = get_pending_orders_by_user(uid)
-    if not orders:
-        await safe_edit(query, t_html(uid, "pending_empty"))
-        return
+
     order_icon = ui_emoji_html("order")
+
+    # Không có đơn → chỉ hiện nút quay lại
+    if not orders:
+        kb = InlineKeyboardMarkup([
+            [button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]
+        ])
+        await safe_edit(
+            query,
+            t_html(uid, "pending_empty"),
+            reply_markup=kb
+        )
+        return
+
     text = f"{order_icon} <b>{html.escape(t(uid, 'pending_title'))}:</b>\n\n"
-    for o in orders[:10]:
+    kb_rows = []
+
+    for i, o in enumerate(orders[:10], 1):
         p = get_product(o["product_id"])
         name = product_name_html(p["name"], p.get("emoji_id")) if p else "?"
-        text += f"#{o['id']} - {name} - {o['amount']:,} VND\n"
-    await safe_edit(query, text)
+        short_code = str(o["id"])[-6:]
+        text += f"{i}. <code>#{o['id']}</code> - {name} - {o['amount']:,} VND\n"
+
+        pay_label = f"{t(uid, 'btn_pay_again')} #{short_code}"
+        del_label = f"{t(uid, 'btn_delete_order')} #{short_code}"
+
+        kb_rows.append([
+            InlineKeyboardButton(pay_label, callback_data=f"backpay_{o['id']}"),
+            InlineKeyboardButton(del_label, callback_data=f"del_order_{o['id']}"),
+        ])
+
+    if len(orders) > 10:
+        text += f"\n<i>... và {len(orders) - 10} đơn khác</i>\n"
+
+    text += f"\n<i>{html.escape(t(uid, 'pending_hint'))}</i>"
+
+    # Nút quay lại menu cuối
+    kb_rows.append([
+        button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")
+    ])
+
+    await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb_rows))
+
+
+async def delete_pending_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xóa (cancel) đơn hàng chờ rồi refresh lại danh sách."""
+    query = update.callback_query
+    uid = query.from_user.id
+    try:
+        oc = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("Loi du lieu", show_alert=True)
+        return
+
+    order = get_order(oc)
+    if not order or order["user_id"] != uid:
+        await query.answer("Khong tim thay don", show_alert=True)
+        return
+    if order["status"] != "pending":
+        await query.answer("Don da xu ly roi", show_alert=True)
+        return
+
+    update_order_status(oc, "cancelled")
+    logger.info(f"Deleted pending order {oc} by user {uid}")
+    await query.answer(t(uid, "order_cancelled_ok"), show_alert=False)
+
+    # Refresh danh sách
+    await my_orders(update, context)
 
 
 # ============================================================
@@ -1824,6 +1892,7 @@ TEXT_KEYS_INFO = {
     "shop_title": "Tieu de shop",
     "shop_prompt": "Dong 'Chon san pham...'",
     "pending_empty": "Khi user khong co don cho",
+    "pending_hint": "Huong dan trong menu don cho",
     "order_hint": "Huong dan sau thanh toan",
     "order_success": "Thong bao thanh cong",
     "binance_note": "Luu y Binance",
@@ -2155,6 +2224,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
     app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
+    app.add_handler(CallbackQueryHandler(delete_pending_order_callback, pattern=r"^del_order_\d+$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
     app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
