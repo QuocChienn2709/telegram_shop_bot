@@ -112,7 +112,7 @@ def _fetch_binance_p2p():
                 continue
             if len(prices) >= 3:
                 sp = sorted(prices)
-                avg = sum(sp[1:-1]) / (len(sp) - 2)
+                avg = sum(sp[1:- / (len(sp) - 2)
             else:
                 avg = sum(prices) / len(prices)
             return round(avg, 2), ""
@@ -164,7 +164,7 @@ def get_binance_rate_live():
 
 
 # ============================================================
-# I18N - KHÔNG EMOJI LITERAL
+# I18N
 # ============================================================
 DEFAULT_TEXTS = {
     "vi": {
@@ -1096,10 +1096,8 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
-        # Gộp khoảng trắng trước dấu |
         clean = re.sub(r'\s+\|', '|', clean).strip()
 
-        # Bỏ tiền tố /add
         if clean.lower().startswith("/add"):
             body = clean[4:].strip()
         else:
@@ -1109,13 +1107,11 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_reply(update.message, "Thieu tham so.")
             return
 
-        # --- Tách name|desc (nếu có) ---
         if "|" in body:
             name_part, rest = body.split("|", 1)
             name = name_part.strip()
             has_desc = True
         else:
-            # Không có mô tả: token đầu là tên
             tokens0 = body.split(maxsplit=1)
             if len(tokens0) < 2:
                 await safe_reply(update.message, "Thieu gia hoac so luong.")
@@ -1128,7 +1124,6 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_reply(update.message, "Thieu ten san pham.")
             return
 
-        # --- Parse từ cuối lên ---
         rest = rest.strip()
         tokens = rest.split()
 
@@ -1142,7 +1137,6 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "<code>/add YouTube|YouTube Team 30D 3000 5 K1,K2,K3</code>")
             return
 
-        # Phần cuối có dấu phẩy → là keys
         if "," in tokens[-1]:
             keys_str = tokens[-1]
             tokens = tokens[:-1]
@@ -1159,7 +1153,6 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_str = tokens[-2]
         description = " ".join(tokens[:-2]).strip() if has_desc else ""
 
-        # --- Parse giá ---
         try:
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0:
@@ -1168,7 +1161,6 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
             return
 
-        # --- Parse số lượng / keys ---
         keys = []
         if keys_str.strip() and keys_str.strip() != "-":
             keys = [k.strip() for k in keys_str.split(",") if k.strip()]
@@ -1183,24 +1175,23 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 await safe_reply(update.message, f"So luong loi: <code>{html.escape(stock_str)}</code>")
                 return
-            # Giữ nguyên stock cho email flow
 
-        # --- Validate emoji ---
+        # Validate emoji nhưng LUÔN LƯU emoji_id (không xóa nếu fail)
         emoji_note = ""
         if emoji_id:
             ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
             if not ok:
-                emoji_note = "\nLuu y: Emoji khong hien thi duoc, da bo."
-                emoji_id = None
+                emoji_note = "\nLuu y: Bot co the khong hien thi duoc emoji nay, nhung van luu."
 
         pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
         desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
+        emoji_info = f"\nEmoji ID: <code>{emoji_id}</code>" if emoji_id else ""
         await safe_reply(update.message,
             f"Da them SP ID <code>{pid}</code>\n"
             f"Ten: {html.escape(name)}{desc_info}\n"
             f"Gia: {price:,} VND\n"
             f"Ton kho: {stock}\n"
-            f"Keys: {len(keys)}{emoji_note}\n\n"
+            f"Keys: {len(keys)}{emoji_info}{emoji_note}\n\n"
             f"<i>San pham chi co slot (khong key): bat email flow bang\n"
             f"<code>/setflow {pid} email</code></i>")
     except Exception as e:
@@ -1320,6 +1311,7 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """LUÔN LƯU emoji vào DB, chỉ cảnh báo nếu validate fail."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     try:
@@ -1336,12 +1328,16 @@ async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_
         if not p:
             await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
             return
+
         ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
-        if not ok:
-            await safe_reply(update.message, "Bot khong co quyen dung emoji nay.")
-            return
         get_db().products.update_one({"id": pid}, {"$set": {"emoji_id": emoji_id}})
-        await safe_reply(update.message, f"Da dat emoji cho SP <code>{pid}</code>.")
+
+        if ok:
+            await safe_reply(update.message, f"Da dat emoji cho SP <code>{pid}</code>.")
+        else:
+            await safe_reply(update.message,
+                f"Da luu emoji cho SP <code>{pid}</code>.\n"
+                f"Luu y: Bot co the khong hien thi duoc emoji nay.")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
@@ -1539,7 +1535,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ADMIN - SETUI (UI + Text)
+# ADMIN - SETUI (UI + Text) - LUÔN LƯU
 # ============================================================
 def _resolve_setui_key(key):
     if key in UI_KEYS:
@@ -1574,15 +1570,17 @@ async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not emoji_id:
             await safe_reply(update.message, "Khong tim thay custom emoji.")
             return
+
         ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
-        if not ok:
-            await safe_reply(update.message,
-                f"Bot khong co quyen dung emoji nay.\n"
-                f"Ep luu: <code>/setui_force {key} [emoji]</code>")
-            return
         set_setting(setting_key, emoji_id)
         label = "UI" if kind == "ui" else "text"
-        await safe_reply(update.message, f"Da dat emoji {label} cho <code>{key}</code>.")
+
+        if ok:
+            await safe_reply(update.message, f"Da dat emoji {label} cho <code>{key}</code>.")
+        else:
+            await safe_reply(update.message,
+                f"Da luu emoji {label} cho <code>{key}</code>.\n"
+                f"Luu y: Bot co the khong hien thi duoc emoji nay.")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
@@ -1998,7 +1996,6 @@ async def main():
         admin_import_products
     ))
 
-    # Text handler - dat SAU TAT CA command handler
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
         handle_user_text
