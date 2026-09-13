@@ -144,10 +144,11 @@ def get_product(pid):
 
 
 def list_products(limit=5, offset=0):
+    """HIỆN TẤT CẢ SP kể cả hết hàng (không filter stock > 0)."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         cur = _get_db().products.find(
-            {"stock": {"$gt": 0}},
+            {},
             {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1,
              "emoji_id": 1, "requires_email": 1}
         ).sort("id", ASCENDING).limit(200)
@@ -158,6 +159,7 @@ def list_products(limit=5, offset=0):
 
 
 def count_products():
+    """Đếm tất cả SP."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         list_products(limit=1)
@@ -309,7 +311,6 @@ def restore_cancelled_order(order_code, key_assigned=None):
 
 
 def hide_order(order_code, user_id):
-    """Ẩn đơn cancelled khỏi danh sách user."""
     result = _get_db().orders.update_one(
         {"order_code": int(order_code), "user_id": int(user_id), "status": "cancelled"},
         {"$set": {"hidden": True}}
