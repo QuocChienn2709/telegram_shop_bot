@@ -31,7 +31,7 @@ from database import (
     get_available_key, create_order, get_order, update_order_status,
     set_order_email, set_order_email_status, get_awaiting_email_order,
     get_pending_orders_by_user, get_recent_orders_by_user, restore_cancelled_order,
-    get_db, register_user,
+    hide_order, get_db, register_user,
     get_user_lang, set_user_lang, is_lang_set,
     get_all_user_ids, count_users,
     get_user_balance, add_balance, subtract_balance,
@@ -184,6 +184,7 @@ DEFAULT_TEXTS = {
         "btn_back_shop": "Về cửa hàng",
         "btn_pay_again": "Thanh toán",
         "btn_delete_order": "Xóa đơn",
+        "btn_hide_order": "Ẩn đơn",
         "btn_recheck_order": "Kiểm tra lại",
         "btn_refresh": "Load lại",
         "btn_lang": "Ngôn ngữ",
@@ -283,6 +284,7 @@ DEFAULT_TEXTS = {
         "btn_back_shop": "Back to shop",
         "btn_pay_again": "Pay",
         "btn_delete_order": "Delete",
+        "btn_hide_order": "Hide",
         "btn_recheck_order": "Recheck",
         "btn_refresh": "Refresh",
         "btn_lang": "Language",
@@ -526,6 +528,7 @@ UI_KEYS = {
     "recheck": "Biểu tượng kiểm tra lại",
     "wallet": "Biểu tượng ví",
     "topup": "Nút nạp ví",
+    "hide": "Biểu tượng ẩn",
 }
 
 
@@ -667,7 +670,7 @@ def email_confirm_buttons(order_code, uid=None):
 
 
 # ============================================================
-# EMAIL FLOW HELPER
+# HELPERS
 # ============================================================
 async def _notify_admin_email_request(bot, order, email, tg_user=None):
     try:
@@ -715,7 +718,6 @@ async def _notify_admin_email_request(bot, order, email, tg_user=None):
 
 
 async def check_email_block(query, uid):
-    """Nếu user có email chưa xác nhận → block."""
     order = get_awaiting_email_order(uid)
     if order and order.get("email_status") in ("awaiting", "awaiting_user_confirm"):
         try:
@@ -724,6 +726,20 @@ async def check_email_block(query, uid):
             pass
         return True
     return False
+
+
+async def goto_shop_menu(bot, chat_id, uid, message_text=None):
+    prods = list_products(limit=5, offset=0)
+    if not prods:
+        await safe_send(bot, chat_id, t_html(uid, "shop_empty"))
+        return
+    ui_icon = ui_emoji_html("shop")
+    title_body = t_html(uid, "shop_title")
+    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
+    text = f"{title_html}\n\n{t_html(uid, 'shop_prompt')}"
+    if message_text:
+        text = f"{message_text}\n\n{text}"
+    await safe_send(bot, chat_id, text, reply_markup=product_buttons(prods, page=0, uid=uid))
 
 
 # ============================================================
@@ -759,11 +775,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def lang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    await safe_reply(
-        update.message,
-        t_html(uid, "lang_choose"),
-        reply_markup=lang_buttons(uid=uid)
-    )
+    await safe_reply(update.message, t_html(uid, "lang_choose"), reply_markup=lang_buttons(uid=uid))
 
 
 async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1249,7 +1261,6 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. <code>#{o['id']}</code> - {name} - {o['amount']:,} VND{status_icon}\n"
 
         if o["status"] == "pending":
-            # 2 hàng riêng cho mỗi đơn — tránh bị cắt chữ
             kb_rows.append([
                 InlineKeyboardButton(
                     f"{t(uid, 'btn_pay_again')} #{short_code}",
@@ -1267,6 +1278,12 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton(
                     f"{t(uid, 'btn_recheck_order')} #{short_code}",
                     callback_data=f"recheck_{o['id']}"
+                ),
+            ])
+            kb_rows.append([
+                InlineKeyboardButton(
+                    f"{t(uid, 'btn_hide_order')} #{short_code}",
+                    callback_data=f"hide_order_{o['id']}"
                 ),
             ])
 
@@ -1386,6 +1403,28 @@ async def recheck_cancelled_order_callback(update: Update, context: ContextTypes
         )
 
 
+async def hide_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ẩn đơn cancelled khỏi danh sách (soft-hide)."""
+    query = update.callback_query
+    uid = query.from_user.id
+    try:
+        oc = int(query.data.split("_")[2])
+    except (ValueError, IndexError):
+        await query.answer("Loi du lieu", show_alert=True)
+        return
+    order = get_order(oc)
+    if not order or order["user_id"] != uid:
+        await query.answer("Khong tim thay don", show_alert=True)
+        return
+    if order["status"] != "cancelled":
+        await query.answer("Chi an duoc don da huy", show_alert=True)
+        return
+
+    hide_order(oc, uid)
+    await query.answer("Da an don", show_alert=False)
+    await my_orders(update, context)
+
+
 # ============================================================
 # WALLET
 # ============================================================
@@ -1418,11 +1457,7 @@ async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_back"), callback_data="wallet", ui_key="back")],
     ])
-    await safe_edit(
-        query,
-        f"{html.escape(t(uid, 'wallet_topup_prompt'))}",
-        reply_markup=kb
-    )
+    await safe_edit(query, html.escape(t(uid, "wallet_topup_prompt")), reply_markup=kb)
 
 
 async def handle_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1538,8 +1573,7 @@ async def topup_check_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if order["status"] == "paid":
         bal = get_user_balance(uid)
         await query.answer("Đã nạp trước đó", show_alert=True)
-        await safe_edit(query,
-            t_html(uid, "wallet_topup_success", amount=order["amount"], balance=bal))
+        await safe_edit(query, t_html(uid, "wallet_topup_success", amount=order["amount"], balance=bal))
         return
     data = get_payment_status(oc)
     paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
@@ -1547,8 +1581,7 @@ async def topup_check_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         mark_topup_paid(oc)
         bal = get_user_balance(uid)
         await query.answer("Nạp thành công", show_alert=True)
-        await safe_edit(query,
-            t_html(uid, "wallet_topup_success", amount=order["amount"], balance=bal))
+        await safe_edit(query, t_html(uid, "wallet_topup_success", amount=order["amount"], balance=bal))
     else:
         await query.answer("Chưa nhận được thanh toán", show_alert=True)
 
@@ -1595,14 +1628,8 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         set_order_email_status(order_code, "awaiting")
         decrement_stock(order["product_id"])
         new_bal = get_user_balance(uid)
-        await safe_edit(
-            query,
-            t_html(uid, "wallet_paid_success", amount=order["amount"], balance=new_bal)
-        )
-        await safe_send(
-            context.bot, query.message.chat_id,
-            t_html(uid, "youtube_email_paid_msg")
-        )
+        await safe_edit(query, t_html(uid, "wallet_paid_success", amount=order["amount"], balance=new_bal))
+        await safe_send(context.bot, query.message.chat_id, t_html(uid, "youtube_email_paid_msg"))
     else:
         key = get_available_key(order["product_id"])
         if not key:
@@ -1664,11 +1691,7 @@ async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFA
         return
     email = order.get("customer_email") or ""
     set_order_email_status(order_code, "pending_admin")
-    await safe_edit(
-        query,
-        t_html(uid, "youtube_email_sent_admin", email=html.escape(email)),
-        reply_markup=None
-    )
+    await safe_edit(query, t_html(uid, "youtube_email_sent_admin", email=html.escape(email)), reply_markup=None)
     await _notify_admin_email_request(context.bot, order, email, tg_user=query.from_user)
 
 
@@ -1718,14 +1741,13 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
     user_uid = order["user_id"]
     email = order.get("customer_email") or ""
     try:
-        await safe_send(context.bot, user_uid,
-            t_html(user_uid, "youtube_email_done", email=html.escape(email)))
+        await safe_send(context.bot, user_uid, t_html(user_uid, "youtube_email_done", email=html.escape(email)))
     except Exception as e:
         logger.error(f"Notify user {user_uid}: {e}")
 
 
 # ============================================================
-# ADMIN HANDLERS (giữ nguyên từ bản trước)
+# ADMIN - PRODUCTS
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -1832,8 +1854,7 @@ async def admin_setflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
         return
     set_product_requires_email(pid, flow == "email")
-    await safe_reply(update.message,
-        f"SP <code>{pid}</code> ({html.escape(p['name'])}): flow = <b>{flow}</b>")
+    await safe_reply(update.message, f"SP <code>{pid}</code> ({html.escape(p['name'])}): flow = <b>{flow}</b>")
 
 
 async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1906,8 +1927,7 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
-        await safe_reply(update.message,
-            f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
+        await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
@@ -2082,8 +2102,7 @@ async def admin_confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE
             decrement_stock(order["product_id"])
             await safe_reply(update.message, f"Da xac nhan don <code>{oc}</code> (email flow).")
             try:
-                await safe_send(context.bot, order["user_id"],
-                                t_html(order["user_id"], "youtube_email_paid_msg"))
+                await safe_send(context.bot, order["user_id"], t_html(order["user_id"], "youtube_email_paid_msg"))
             except Exception as e:
                 logger.error(f"notify: {e}")
         else:
@@ -2484,7 +2503,6 @@ async def payos_webhook(request: Request):
             if not order:
                 return Response(text="OK", status=200)
 
-            # Topup riêng
             if order.get("type") == "topup":
                 if mark_topup_paid(oc):
                     bal = get_user_balance(order["user_id"])
@@ -2496,7 +2514,6 @@ async def payos_webhook(request: Request):
                         logger.error(f"notify topup: {e}")
                 return Response(text="OK", status=200)
 
-            # Sản phẩm thường
             if order["status"] == "pending":
                 product = get_product(order["product_id"])
                 email_flow = bool(product and product.get("requires_email"))
@@ -2522,7 +2539,6 @@ async def payos_webhook(request: Request):
                         except Exception as e:
                             logger.error(f"notify: {e}")
             elif order["status"] == "cancelled":
-                # Late webhook → auto restore
                 logger.info(f"Late webhook for cancelled order {oc} — restoring")
                 product = get_product(order["product_id"])
                 email_flow = bool(product and product.get("requires_email"))
@@ -2561,11 +2577,9 @@ async def main():
     logger.info(f"BINANCE_AUTO_RATE: {Config.BINANCE_AUTO_RATE}")
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
-    # User
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("lang", lang_cmd))
 
-    # Admin
     app.add_handler(CommandHandler("add", admin_add_product))
     app.add_handler(CommandHandler("addkey", admin_add_key))
     app.add_handler(CommandHandler("setemoji", admin_set_product_emoji))
@@ -2593,19 +2607,16 @@ async def main():
     app.add_handler(CommandHandler("deltext", admin_deltext))
     app.add_handler(CommandHandler("help", admin_help))
 
-    # Import .txt
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products
     ))
 
-    # Text handler (email + topup)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
         handle_user_text
     ))
 
-    # Callbacks
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
     app.add_handler(CallbackQueryHandler(confirm_send_email_callback, pattern=r"^cfmsend_\d+$"))
     app.add_handler(CallbackQueryHandler(cancel_send_email_callback, pattern=r"^cfmcancel_\d+$"))
@@ -2615,6 +2626,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
     app.add_handler(CallbackQueryHandler(delete_pending_order_callback, pattern=r"^del_order_\d+$"))
     app.add_handler(CallbackQueryHandler(recheck_cancelled_order_callback, pattern=r"^recheck_\d+$"))
+    app.add_handler(CallbackQueryHandler(hide_order_callback, pattern=r"^hide_order_\d+$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
     app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
@@ -2626,7 +2638,6 @@ async def main():
     app.add_handler(CallbackQueryHandler(cancel_order, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(my_orders, pattern=r"^my_orders$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^back_list$"))
-    # Wallet
     app.add_handler(CallbackQueryHandler(wallet_callback, pattern=r"^wallet$"))
     app.add_handler(CallbackQueryHandler(topup_callback, pattern=r"^topup$"))
     app.add_handler(CallbackQueryHandler(topup_payos_callback, pattern=r"^topup_payos_\d+$"))
