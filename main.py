@@ -108,11 +108,11 @@ def _fetch_binance_p2p():
                     except (TypeError, ValueError):
                         pass
             if not prices:
-                last_err = "Không có ads"
+                last_err = "Khong co ads"
                 continue
             if len(prices) >= 3:
                 sp = sorted(prices)
-                avg = sum(sp[1:- / (len(sp) - 2)
+                avg = sum(sp[1:-1]) / (len(sp) - 2)
             else:
                 avg = sum(prices) / len(prices)
             return round(avg, 2), ""
