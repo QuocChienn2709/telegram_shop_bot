@@ -30,7 +30,8 @@ from database import (
     list_all_products, count_all_products,
     get_available_key, create_order, get_order, update_order_status,
     set_order_email, set_order_email_status, get_awaiting_email_order,
-    get_pending_orders_by_user, get_db, register_user,
+    get_pending_orders_by_user, get_orders_by_user_and_ids,
+    get_db, register_user,
     get_user_lang, set_user_lang, is_lang_set,
     get_all_user_ids, count_users,
     get_setting, set_setting, delete_setting, get_all_settings,
@@ -61,6 +62,9 @@ EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 _binance_rate_cache = {"rate": None, "ts": 0, "source": "manual", "error": ""}
 BINANCE_CACHE_TTL = 300
 
+_session = requests.Session()
+_session.headers.update({"User-Agent": "Mozilla/5.0"})
+
 
 def _fetch_binance_p2p():
     endpoints = [
@@ -86,7 +90,7 @@ def _fetch_binance_p2p():
     last_err = ""
     for url in endpoints:
         try:
-            r = requests.post(url, headers=headers, json=payload, timeout=10)
+            r = _session.post(url, headers=headers, json=payload, timeout=8)
             if r.status_code != 200:
                 last_err = f"HTTP {r.status_code}: {r.text[:120]}"
                 continue
@@ -117,7 +121,7 @@ def _fetch_binance_p2p():
 
 def _fetch_fallback_rate():
     try:
-        r = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10)
+        r = _session.get("https://open.er-api.com/v6/latest/USD", timeout=8)
         if r.status_code != 200:
             return None, f"er-api HTTP {r.status_code}"
         data = r.json()
@@ -559,8 +563,6 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
             for e in (m.entities or [])
         )
         await m.delete()
-        if not has_entity:
-            logger.warning(f"Emoji {emoji_id} bi Telegram strip")
         return has_entity
     except Exception as e:
         logger.info(f"emoji validate fail: {e}")
@@ -568,13 +570,13 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
 
 
 # ============================================================
-# BUTTON BUILDERS
+# BUTTON BUILDERS (FIX: bấm sản phẩm → xem chi tiết trước)
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
     kb = []
     for p in products:
         text = f"{p['name']} - {p['price']:,}đ - còn {p['stock']}"
-        kw = {"text": text, "callback_data": f"buy_{p['id']}"}
+        kw = {"text": text, "callback_data": f"detail_{p['id']}"}  # ← đổi thành detail_
         if p.get("emoji_id"):
             kw["icon_custom_emoji_id"] = p["emoji_id"]
         kb.append([InlineKeyboardButton(**kw)])
@@ -676,11 +678,8 @@ async def _notify_admin_email_request(bot, order, email, tg_user=None):
             try:
                 await safe_send(bot, aid, admin_text, reply_markup=kb)
                 sent += 1
-                logger.info(f"Notified admin {aid} for order {order['order_code']}")
             except Exception as e:
                 logger.error(f"Notify admin {aid} failed: {e}")
-        if sent == 0:
-            logger.error(f"Khong gui duoc cho admin nao! ADMIN_IDS={Config.ADMIN_IDS}")
         return sent
     except Exception as e:
         logger.error(f"_notify_admin_email_request error: {e}", exc_info=True)
@@ -812,6 +811,7 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bấm sản phẩm → hiện chi tiết có mô tả → có nút Mua ngay."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -823,12 +823,19 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         await safe_edit(query, t_html(uid, "not_found"))
         return
+
     name_html = product_name_html(p["name"], p.get("emoji_id"))
-    desc_html = html.escape(p.get("description") or t(uid, "detail_no_desc"))
+    desc_raw = p.get("description") or ""
+    if desc_raw:
+        desc_html = html.escape(desc_raw)
+    else:
+        desc_html = f"<i>{html.escape(t(uid, 'detail_no_desc'))}</i>"
+
+    money_icon = ui_emoji_html("money")
     text = (
         f"<b>{html.escape(t(uid, 'detail_title'))} #{p['id']}</b>\n\n"
         f"<b>{html.escape(t(uid, 'detail_name'))}:</b> {name_html}\n"
-        f"<b>{html.escape(t(uid, 'detail_price'))}:</b> {p['price']:,} VND\n"
+        f"{money_icon} <b>{html.escape(t(uid, 'detail_price'))}:</b> {p['price']:,} VND\n"
         f"<b>{html.escape(t(uid, 'detail_stock'))}:</b> {p['stock']}\n"
         f"<b>{html.escape(t(uid, 'detail_sold'))}:</b> {p['sold']}\n\n"
         f"<b>{html.escape(t(uid, 'detail_desc'))}:</b>\n{desc_html}"
@@ -864,7 +871,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{money_icon} <b>{html.escape(t(uid, 'order_amount'))}:</b> {p['price']:,} VND\n\n"
         f"{t_html(uid, 'payment_method_title')}"
     )
-    await safe_reply(query.message, text, reply_markup=payment_buttons(order_code, uid=uid))
+    await safe_edit(query, text, reply_markup=payment_buttons(order_code, uid=uid))
 
 
 async def pay_payos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1110,10 +1117,9 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ĐƠN HÀNG CHỜ - CẢI TIẾN
+# ĐƠN HÀNG CHỜ - BATCH LOAD + nút thanh toán/xóa
 # ============================================================
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Danh sách đơn hàng chờ + mỗi đơn có nút thanh toán/xóa."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1121,24 +1127,32 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_icon = ui_emoji_html("order")
 
-    # Không có đơn → chỉ hiện nút quay lại
     if not orders:
         kb = InlineKeyboardMarkup([
             [button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]
         ])
-        await safe_edit(
-            query,
-            t_html(uid, "pending_empty"),
-            reply_markup=kb
-        )
+        await safe_edit(query, t_html(uid, "pending_empty"), reply_markup=kb)
         return
+
+    # Batch load products cho các đơn
+    product_ids = list({o["product_id"] for o in orders[:10]})
+    products_map = {}
+    db = get_db()
+    for doc in db.products.find(
+        {"id": {"$in": product_ids}},
+        {"id": 1, "name": 1, "emoji_id": 1}
+    ):
+        products_map[doc["id"]] = doc
 
     text = f"{order_icon} <b>{html.escape(t(uid, 'pending_title'))}:</b>\n\n"
     kb_rows = []
 
     for i, o in enumerate(orders[:10], 1):
-        p = get_product(o["product_id"])
-        name = product_name_html(p["name"], p.get("emoji_id")) if p else "?"
+        p = products_map.get(o["product_id"])
+        if p:
+            name = product_name_html(p["name"], p.get("emoji_id"))
+        else:
+            name = "?"
         short_code = str(o["id"])[-6:]
         text += f"{i}. <code>#{o['id']}</code> - {name} - {o['amount']:,} VND\n"
 
@@ -1155,7 +1169,6 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text += f"\n<i>{html.escape(t(uid, 'pending_hint'))}</i>"
 
-    # Nút quay lại menu cuối
     kb_rows.append([
         button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")
     ])
@@ -1164,7 +1177,6 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def delete_pending_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xóa (cancel) đơn hàng chờ rồi refresh lại danh sách."""
     query = update.callback_query
     uid = query.from_user.id
     try:
@@ -1182,10 +1194,7 @@ async def delete_pending_order_callback(update: Update, context: ContextTypes.DE
         return
 
     update_order_status(oc, "cancelled")
-    logger.info(f"Deleted pending order {oc} by user {uid}")
     await query.answer(t(uid, "order_cancelled_ok"), show_alert=False)
-
-    # Refresh danh sách
     await my_orders(update, context)
 
 
@@ -1197,15 +1206,12 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id in Config.ADMIN_IDS:
         return
     text = (update.message.text or "").strip()
-    logger.info(f"handle_user_text: user={user.id} text='{text[:50]}'")
     if not EMAIL_RE.match(text):
         return
     order = get_awaiting_email_order(user.id)
-    logger.info(f"  -> Order awaiting: {order['order_code'] if order else None}")
     if not order:
         return
     set_order_email(order["order_code"], text)
-    logger.info(f"  -> Da luu email, hien preview")
     await safe_reply(
         update.message,
         t_html(user.id, "youtube_email_preview", email=html.escape(text)),
@@ -1240,10 +1246,9 @@ async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFA
         reply_markup=None
     )
 
-    sent = await _notify_admin_email_request(
+    await _notify_admin_email_request(
         context.bot, order, email, tg_user=query.from_user
     )
-    logger.info(f"  -> Sent to {sent} admin(s)")
 
 
 async def cancel_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
