@@ -1,5 +1,5 @@
 # main.py
-import asyncio, html, json, logging, os, re
+import asyncio, html, json, logging, os, re, time
 from datetime import datetime
 from aiohttp import web
 from aiohttp.web import Request, Response
@@ -25,6 +25,86 @@ from payos_client import create_payment_link, verify_payment_webhook, get_paymen
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 init_db()
+
+
+# ============================================================
+# BINANCE P2P AUTO PRICE (có cache 5 phút)
+# ============================================================
+_binance_rate_cache = {"rate": None, "ts": 0, "source": "manual"}
+BINANCE_CACHE_TTL = 300  # 5 phút
+
+
+def fetch_binance_p2p_price(fiat="VND", trade_type="SELL"):
+    """
+    Lấy giá USDT/fiat trung bình từ Binance P2P.
+    trade_type="SELL": giá người bán USDT (user mua USDT)
+    trade_type="BUY":  giá người mua USDT (user bán USDT)
+    """
+    url = "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search"
+    payload = {
+        "asset": "USDT",
+        "fiat": fiat,
+        "merchantCheck": False,
+        "page": 1,
+        "payTypes": [],
+        "publisherType": None,
+        "rows": 5,
+        "tradeType": trade_type,
+    }
+    headers = {
+        "Accept": "*/*",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+    }
+    try:
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        data = r.json()
+        adv_list = data.get("data") or []
+        prices = []
+        for item in adv_list:
+            adv = item.get("adv", {})
+            p = adv.get("price")
+            if p:
+                try: prices.append(float(p))
+                except (TypeError, ValueError): pass
+        if not prices:
+            return None
+        avg = sum(prices) / len(prices)
+        # Loại outlier: nếu có ≥3 giá, bỏ min/max
+        if len(prices) >= 3:
+            sorted_p = sorted(prices)
+            avg = sum(sorted_p[1:-1]) / (len(sorted_p) - 2)
+        return round(avg, 2)
+    except Exception as e:
+        logger.warning(f"Binance P2P price error: {e}")
+        return None
+
+
+def get_binance_rate_live():
+    """
+    Trả về (rate, source).
+    - Nếu BINANCE_AUTO_RATE=True: thử lấy giá Binance P2P (có cache 5 phút).
+    - Fallback: giá admin set qua /setrate.
+    """
+    global _binance_rate_cache
+    manual = get_usdt_rate()
+
+    if not Config.BINANCE_AUTO_RATE:
+        return manual, "Manual"
+
+    now = time.time()
+    # Cache còn hạn
+    if _binance_rate_cache["rate"] and (now - _binance_rate_cache["ts"]) < BINANCE_CACHE_TTL:
+        return _binance_rate_cache["rate"], _binance_rate_cache["source"]
+
+    # Fetch mới
+    live = fetch_binance_p2p_price("VND", "SELL")
+    if live and live > 0:
+        _binance_rate_cache = {"rate": live, "ts": now, "source": "Binance P2P"}
+        return live, "Binance P2P"
+    else:
+        _binance_rate_cache = {"rate": manual, "ts": now, "source": "Manual (API lỗi)"}
+        return manual, "Manual (API lỗi)"
 
 
 # ============================================================
@@ -69,6 +149,7 @@ DEFAULT_TEXTS = {
         "binance_title": "Thanh toán Binance USDT",
         "binance_amount": "Số tiền", "binance_address": "Địa chỉ ví",
         "binance_network": "Mạng", "binance_memo": "Nội dung/Memo",
+        "binance_rate": "Tỷ giá",
         "binance_note": "Chuyển đúng số tiền và mạng. Ghi đúng nội dung để admin xác nhận.",
         "binance_not_set": "Admin chưa cấu hình ví Binance.",
         "binance_sent": "Tôi đã chuyển khoản",
@@ -116,6 +197,7 @@ DEFAULT_TEXTS = {
         "binance_title": "Binance USDT Payment",
         "binance_amount": "Amount", "binance_address": "Wallet address",
         "binance_network": "Network", "binance_memo": "Memo",
+        "binance_rate": "Rate",
         "binance_note": "Send exact amount on correct network with memo.",
         "binance_not_set": "Binance wallet not configured.",
         "binance_sent": "I have sent",
@@ -173,7 +255,6 @@ TEXT_EMOJI_KEYS = {
 
 
 def text_emoji_html(key, fallback="•"):
-    """Trả về prefix emoji HTML nếu key có setting custom emoji."""
     eid = get_setting(f"text_{key}")
     if eid:
         return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji> '
@@ -181,10 +262,6 @@ def text_emoji_html(key, fallback="•"):
 
 
 def t_html(user_id, key, fallback_char="•", **kwargs):
-    """
-    HTML text với emoji prefix (nếu có) + escape nội dung.
-    Dùng cho mọi chỗ render ra Telegram.
-    """
     base = t(user_id, key, **kwargs)
     prefix = text_emoji_html(key, fallback=fallback_char)
     return f"{prefix}{html.escape(base)}"
@@ -241,7 +318,7 @@ def format_key_display(key, lang="vi"):
 
 
 # ============================================================
-# UI EMOJI KEYS (nút)
+# UI EMOJI KEYS
 # ============================================================
 UI_KEYS = {
     "shop": "Tiêu đề shop",
@@ -304,11 +381,6 @@ def product_name_html(name, emoji_id=None):
     return safe
 
 async def validate_custom_emoji(bot, chat_id, emoji_id):
-    """
-    Gửi thử + kiểm tra entity trả về.
-    - Nếu Telegram nhận tag → có entity custom_emoji → render OK.
-    - Nếu Telegram strip tag → không có entity → emoji không hiển thị.
-    """
     try:
         m = await bot.send_message(
             chat_id=chat_id,
@@ -321,7 +393,7 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
         )
         await m.delete()
         if not has_entity:
-            logger.warning(f"Emoji {emoji_id} bị Telegram strip — không render được")
+            logger.warning(f"Emoji {emoji_id} bị Telegram strip")
         return has_entity
     except Exception as e:
         logger.info(f"emoji validate fail: {e}")
@@ -545,9 +617,12 @@ async def pay_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     addr = get_binance_address()
     if not addr:
         await safe_edit(query, t_html(uid, "binance_not_set"), reply_markup=None); return
-    net = get_binance_network(); rate = get_usdt_rate()
+
+    # === AUTO RATE ===
+    rate, rate_source = get_binance_rate_live()
     usdt = round(order["amount"] / rate, 2)
 
+    net = get_binance_network()
     order_icon = ui_emoji_html("order")
     binance_icon = ui_emoji_html("binance")
     money_icon = ui_emoji_html("money")
@@ -556,6 +631,7 @@ async def pay_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         f"{binance_icon} <b>{html.escape(t(uid, 'binance_title'))}</b>\n"
         f"{order_icon} #{order_code}\n\n"
         f"{money_icon} <b>{html.escape(t(uid, 'binance_amount'))}:</b> <code>{usdt} USDT</code>\n"
+        f"<b>{html.escape(t(uid, 'binance_rate'))}:</b> <code>{rate:,.0f}</code> VND/USDT <i>({html.escape(rate_source)})</i>\n"
         f"<b>{html.escape(t(uid, 'binance_address'))}:</b>\n<code>{html.escape(addr)}</code>\n"
         f"<b>{html.escape(t(uid, 'binance_network'))}:</b> <b>{html.escape(net)}</b>\n"
         f"{code_icon} <b>{html.escape(t(uid, 'binance_memo'))}:</b> <code>DH{order_code}</code>\n\n"
@@ -579,13 +655,15 @@ async def binance_sent_callback(update: Update, context: ContextTypes.DEFAULT_TY
     order = get_order(order_code)
     if order:
         p = get_product(order["product_id"])
-        usdt = round(order["amount"] / get_usdt_rate(), 2)
+        rate, rate_source = get_binance_rate_live()
+        usdt = round(order["amount"] / rate, 2)
         admin_text = (
             f"<b>Yêu cầu xác nhận Binance</b>\n"
             f"Order: <code>{order_code}</code>\n"
             f"User: <code>{uid}</code>\n"
             f"SP: {html.escape(p['name']) if p else '?'}\n"
-            f"Số tiền: {order['amount']:,} VND ≈ {usdt} USDT\n\n"
+            f"Số tiền: {order['amount']:,} VND ≈ {usdt} USDT\n"
+            f"Rate: <code>{rate:,.0f}</code> ({html.escape(rate_source)})\n\n"
             f"Xác nhận: <code>/confirm {order_code}</code>"
         )
         for aid in Config.ADMIN_IDS:
@@ -688,7 +766,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ADMIN - PRODUCTS
+# ADMIN HANDLERS
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -1054,10 +1132,6 @@ async def admin_delui(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_testui(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Cú pháp: /testui <key>
-    Render thử text/emoji của key đó.
-    """
     if update.effective_user.id not in Config.ADMIN_IDS: return
     parts = update.message.text.split()
     if len(parts) < 2:
@@ -1162,34 +1236,61 @@ async def admin_setbinance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_setrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Đặt tỷ giá thủ công - chỉ dùng khi AUTO_RATE=False hoặc API lỗi."""
     if update.effective_user.id not in Config.ADMIN_IDS: return
     parts = update.message.text.split()
     if len(parts) < 2:
-        await safe_reply(update.message, f"Tỷ giá: <code>{get_usdt_rate():,}</code>. Đặt: <code>/setrate 25000</code>"); return
+        r_live, src = get_binance_rate_live()
+        await safe_reply(update.message,
+            f"Tỷ giá hiện tại: <code>{r_live:,.0f}</code> ({html.escape(src)})\n"
+            f"Auto: <b>{'ON' if Config.BINANCE_AUTO_RATE else 'OFF'}</b>\n"
+            f"Đặt thủ công: <code>/setrate 25000</code>"); return
     try:
         r = int(parts[1].replace(".", "").replace(",", ""))
         if r <= 0: raise ValueError()
         set_usdt_rate(r)
-        await safe_reply(update.message, f"✅ Rate: <code>{r:,}</code> VND/USDT")
+        # Invalidate cache để lần sau lấy mới
+        global _binance_rate_cache
+        _binance_rate_cache = {"rate": None, "ts": 0, "source": "manual"}
+        await safe_reply(update.message,
+            f"✅ Đã đặt rate thủ công: <code>{r:,}</code> VND/USDT\n"
+            f"<i>Chỉ dùng khi AUTO_RATE=False hoặc API Binance lỗi.</i>")
     except ValueError:
         await safe_reply(update.message, "Rate lỗi.")
 
 
 async def admin_viewbinance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
-    a = get_binance_address(); n = get_binance_network(); r = get_usdt_rate()
+    a = get_binance_address(); n = get_binance_network()
+    manual = get_usdt_rate()
+    live, src = get_binance_rate_live()
     await safe_reply(update.message,
-        f"<b>Binance</b>\nAddress: <code>{html.escape(a) if a else '(chưa)'}</code>\n"
-        f"Network: <b>{n}</b>\nRate: <code>{r:,}</code> VND/USDT")
+        f"<b>Binance</b>\n"
+        f"Address: <code>{html.escape(a) if a else '(chưa)'}</code>\n"
+        f"Network: <b>{n}</b>\n"
+        f"Auto rate: <b>{'ON' if Config.BINANCE_AUTO_RATE else 'OFF'}</b>\n"
+        f"Rate live: <code>{live:,.0f}</code> ({html.escape(src)})\n"
+        f"Rate manual: <code>{manual:,}</code> VND/USDT")
+
+
+async def admin_refreshrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xóa cache và lấy giá mới ngay."""
+    if update.effective_user.id not in Config.ADMIN_IDS: return
+    global _binance_rate_cache
+    _binance_rate_cache = {"rate": None, "ts": 0, "source": "manual"}
+    live, src = get_binance_rate_live()
+    await safe_reply(update.message, f"✅ Đã làm mới. Rate: <code>{live:,.0f}</code> ({html.escape(src)})")
 
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS: return
+    live, src = get_binance_rate_live()
     await safe_reply(update.message,
         f"<b>Stats</b>\nUsers: <code>{count_users()}</code>\n"
         f"SP: <code>{count_all_products()}</code>\nCòn: <code>{count_products()}</code>\n"
         f"Ví Binance: <code>{html.escape(get_binance_address()) or 'chưa'}</code>\n"
-        f"Network: <b>{get_binance_network()}</b>\nRate: <code>{get_usdt_rate():,}</code>")
+        f"Network: <b>{get_binance_network()}</b>\n"
+        f"Rate: <code>{live:,.0f}</code> ({html.escape(src)})")
 
 
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1209,13 +1310,14 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/setemoji &lt;id&gt; [emoji]</code>\n\n"
         "<b>Binance:</b>\n"
         "<code>/setbinance &lt;address&gt; [network]</code>\n"
-        "<code>/setrate &lt;VND_per_USDT&gt;</code>\n"
-        "<code>/viewbinance</code> / <code>/confirm &lt;order&gt;</code>\n\n"
+        "<code>/setrate &lt;VND_per_USDT&gt;</code> (thủ công)\n"
+        "<code>/viewbinance</code> / <code>/refreshrate</code>\n"
+        "<code>/confirm &lt;order&gt;</code>\n\n"
         "<b>UI + Text Emoji:</b>\n"
         "<code>/setui &lt;key&gt; [emoji]</code>\n"
         "<code>/setui_force &lt;key&gt; [emoji]</code>\n"
         "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n"
-        "<code>/testui &lt;key&gt;</code> - test emoji render\n\n"
+        "<code>/testui &lt;key&gt;</code>\n\n"
         "<b>Texts:</b>\n"
         "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
         "<code>/viewtext</code> / <code>/deltext &lt;lang&gt; &lt;key&gt;</code>\n\n"
@@ -1307,6 +1409,7 @@ async def main():
     app.add_handler(CommandHandler("setbinance", admin_setbinance))
     app.add_handler(CommandHandler("setrate", admin_setrate))
     app.add_handler(CommandHandler("viewbinance", admin_viewbinance))
+    app.add_handler(CommandHandler("refreshrate", admin_refreshrate))
     app.add_handler(CommandHandler("confirm", admin_confirm_order))
 
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
