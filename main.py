@@ -229,7 +229,6 @@ DEFAULT_TEXTS = {
         "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
         "btn_lang_vi": "Tiếng Việt",
         "btn_lang_en": "English",
-        # Email flow
         "youtube_email_ask": "Vui lòng gửi email của bạn cho bot để admin thêm vào team.\n\nVí dụ: yourname@gmail.com",
         "youtube_email_preview": "Email của bạn: <code>{email}</code>\n\nNhấn nút bên dưới để <b>xác nhận gửi email này cho admin</b>.",
         "youtube_email_btn_confirm_send": "Xác nhận gửi cho admin",
@@ -239,7 +238,6 @@ DEFAULT_TEXTS = {
         "youtube_email_pending": "Email: <code>{email}</code>\n\nĐang chờ admin thêm vào team. Vui lòng đợi.",
         "youtube_email_done": "Hoàn tất!\n\nEmail <code>{email}</code> đã được thêm vào team.\nVui lòng kiểm tra hộp thư để nhận lời mời.",
         "youtube_email_paid_msg": "Thanh toán thành công!\n\nVui lòng gửi email của bạn cho bot để admin thêm vào team.",
-        # Admin email
         "admin_email_request_title": "Yêu cầu thêm vào team",
         "admin_email_confirm_btn": "Đã thêm vào team",
         "admin_email_confirmed": "[ĐÃ XÁC NHẬN]",
@@ -610,7 +608,6 @@ def lang_buttons(uid=None):
 
 
 def email_confirm_buttons(order_code, uid=None):
-    """Nút xác nhận user gửi email cho admin."""
     return InlineKeyboardMarkup([
         [button(t(uid, "youtube_email_btn_confirm_send"),
                 callback_data=f"cfmsend_{order_code}", ui_key="send")],
@@ -620,35 +617,65 @@ def email_confirm_buttons(order_code, uid=None):
 
 
 # ============================================================
-# EMAIL FLOW HELPERS
+# EMAIL FLOW HELPER - FIX: fetch user info nếu cần, log rõ
 # ============================================================
-async def _notify_admin_email_request(bot, order, email, tg_user):
-    """Gửi cho admin thông báo kèm nút xác nhận."""
-    product = get_product(order["product_id"])
-    prod_name = html.escape(product["name"]) if product else "?"
-    if tg_user.username:
-        user_info = f"@{tg_user.username}"
-    else:
-        user_info = tg_user.full_name or "?"
-    prefix_email = ui_emoji_html("email")
-    admin_text = (
-        f"{prefix_email} <b>{html.escape(t(0, 'admin_email_request_title'))}</b>\n\n"
-        f"Order: <code>{order['order_code']}</code>\n"
-        f"User: {html.escape(user_info)} (<code>{order['user_id']}</code>)\n"
-        f"SP: {prod_name}\n"
-        f"Email: <code>{html.escape(email)}</code>"
-    )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            t(0, "admin_email_confirm_btn"),
-            callback_data=f"cfemail_{order['order_code']}"
-        )]
-    ])
-    for aid in Config.ADMIN_IDS:
-        try:
-            await safe_send(bot, aid, admin_text, reply_markup=kb)
-        except Exception as e:
-            logger.error(f"Notify admin {aid}: {e}")
+async def _notify_admin_email_request(bot, order, email, tg_user=None):
+    """
+    Gửi thông báo cho admin kèm nút xác nhận.
+    tg_user: có thể là object User hoặc None.
+    Trả về số admin đã gửi thành công.
+    """
+    try:
+        product = get_product(order["product_id"])
+        prod_name = html.escape(product["name"]) if product else "?"
+
+        # Lấy thông tin user
+        if tg_user is not None:
+            if getattr(tg_user, "username", None):
+                user_info = f"@{tg_user.username}"
+            else:
+                user_info = getattr(tg_user, "full_name", None) or "?"
+        else:
+            try:
+                chat = await bot.get_chat(order["user_id"])
+                if chat.username:
+                    user_info = f"@{chat.username}"
+                else:
+                    user_info = chat.full_name or "?"
+            except Exception:
+                user_info = "?"
+
+        prefix_email = ui_emoji_html("email")
+        admin_text = (
+            f"{prefix_email} <b>{html.escape(t(0, 'admin_email_request_title'))}</b>\n\n"
+            f"Order: <code>{order['order_code']}</code>\n"
+            f"User: {html.escape(user_info)} (<code>{order['user_id']}</code>)\n"
+            f"SP: {prod_name}\n"
+            f"Email: <code>{html.escape(email)}</code>"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                t(0, "admin_email_confirm_btn"),
+                callback_data=f"cfemail_{order['order_code']}"
+            )]
+        ])
+        sent = 0
+        for aid in Config.ADMIN_IDS:
+            try:
+                await safe_send(bot, aid, admin_text, reply_markup=kb)
+                sent += 1
+                logger.info(f"Notified admin {aid} for order {order['order_code']}")
+            except Exception as e:
+                logger.error(f"Notify admin {aid} failed: {e}")
+        if sent == 0:
+            logger.error(
+                f"Khong gui duoc cho admin nao! "
+                f"ADMIN_IDS={Config.ADMIN_IDS}"
+            )
+        return sent
+    except Exception as e:
+        logger.error(f"_notify_admin_email_request error: {e}", exc_info=True)
+        return 0
 
 
 # ============================================================
@@ -1054,21 +1081,23 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# TEXT HANDLER (email capture) - Bước 1: lưu tạm
+# TEXT HANDLER (email capture)
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in Config.ADMIN_IDS:
         return
     text = (update.message.text or "").strip()
+    logger.info(f"handle_user_text: user={user.id} text='{text[:50]}'")
     if not EMAIL_RE.match(text):
+        logger.info("  -> Khong phai email, bo qua")
         return
     order = get_awaiting_email_order(user.id)
+    logger.info(f"  -> Order awaiting: {order['order_code'] if order else None}")
     if not order:
         return
-    # Lưu email tạm, status = awaiting_user_confirm
     set_order_email(order["order_code"], text)
-    # Hiện preview + nút xác nhận cho user
+    logger.info(f"  -> Da luu email, hien preview cho user")
     await safe_reply(
         update.message,
         t_html(user.id, "youtube_email_preview", email=html.escape(text)),
@@ -1077,7 +1106,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# USER CONFIRM SEND EMAIL - Bước 2
+# USER CONFIRM SEND EMAIL
 # ============================================================
 async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1086,28 +1115,36 @@ async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFA
     try:
         order_code = int(query.data.split("_")[1])
     except (ValueError, IndexError):
+        await query.answer("Loi du lieu", show_alert=True)
         return
+
+    logger.info(f"confirm_send_email: uid={uid} order={order_code}")
+
     order = get_order(order_code)
     if not order:
-        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        await query.answer("Khong tim thay don", show_alert=True)
         return
     if order.get("email_status") != "awaiting_user_confirm":
-        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        await query.answer("Don da xu ly roi", show_alert=True)
         return
 
     email = order.get("customer_email") or ""
-    # Cập nhật trạng thái → pending_admin
     set_order_email_status(order_code, "pending_admin")
+    logger.info(f"  -> Set status pending_admin for {order_code}")
 
-    # Đổi tin nhắn user → thông báo đã gửi
     await safe_edit(
         query,
         t_html(uid, "youtube_email_sent_admin", email=html.escape(email)),
         reply_markup=None
     )
 
-    # Gửi admin (kèm nút xác nhận)
-    await _notify_admin_email_request(context.bot, order, email, uid_user=uid)
+    # FIX: Truyền tg_user (không phải uid)
+    sent = await _notify_admin_email_request(
+        context.bot, order, email, tg_user=query.from_user
+    )
+    logger.info(f"  -> Sent to {sent} admin(s)")
+    if sent == 0:
+        logger.error(f"Khong gui duoc cho admin nao! order={order_code}")
 
 
 async def cancel_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1126,17 +1163,17 @@ async def cancel_send_email_callback(update: Update, context: ContextTypes.DEFAU
         await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
         return
 
-    # Reset về awaiting (không xóa email, user có thể gửi lại)
     set_order_email_status(order_code, "awaiting")
     await safe_edit(query, t_html(uid, "youtube_email_cancelled"), reply_markup=None)
 
 
 # ============================================================
-# ADMIN CONFIRM - Bước 3
+# ADMIN CONFIRM EMAIL
 # ============================================================
 async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     admin_uid = query.from_user.id
+    logger.info(f"confirm_email_callback: admin={admin_uid} data={query.data}")
     if admin_uid not in Config.ADMIN_IDS:
         await query.answer("Khong co quyen", show_alert=True)
         return
@@ -1156,7 +1193,6 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
     set_order_email_status(oc, "confirmed")
     await query.answer("Da xac nhan")
 
-    # Đánh dấu tin nhắn admin
     try:
         await query.edit_message_text(
             (query.message.text or "") + f"\n\n{t(0, 'admin_email_confirmed')}",
@@ -1165,7 +1201,6 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
     except Exception:
         pass
 
-    # Thông báo user hoàn thành
     user_uid = order["user_id"]
     email = order.get("customer_email") or ""
     try:
@@ -1173,6 +1208,7 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
             context.bot, user_uid,
             t_html(user_uid, "youtube_email_done", email=html.escape(email))
         )
+        logger.info(f"  -> Notified user {user_uid} for order {oc}")
     except Exception as e:
         logger.error(f"Notify user {user_uid}: {e}")
 
@@ -2041,6 +2077,8 @@ async def payos_webhook(request: Request):
 # MAIN
 # ============================================================
 async def main():
+    logger.info(f"ADMIN_IDS loaded: {Config.ADMIN_IDS}")
+    logger.info(f"BINANCE_AUTO_RATE: {Config.BINANCE_AUTO_RATE}")
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
