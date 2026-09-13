@@ -444,7 +444,7 @@ def t_html(user_id, key, fallback_char="•", **kwargs):
 
 
 # ============================================================
-# SAFE HTML
+# SAFE HTML (FIX: log + fallback plain text)
 # ============================================================
 _TG_EMOJI_RE = re.compile(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', re.DOTALL)
 
@@ -463,8 +463,20 @@ async def safe_reply(message, text, **kw):
         return await message.reply_text(text, parse_mode=ParseMode.HTML, **kw)
     except Exception as e:
         if _is_entity_error(e):
-            return await message.reply_text(_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kw)
-        raise
+            logger.warning(f"safe_reply tg-emoji fail, retry: {e}")
+            try:
+                return await message.reply_text(_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kw)
+            except Exception as e2:
+                logger.error(f"safe_reply retry failed: {e2}")
+                kw.pop("parse_mode", None)
+                return await message.reply_text(_strip_tg_emoji(text), **kw)
+        logger.error(f"safe_reply HTTP error: {e} | text={text[:200]}")
+        try:
+            kw.pop("parse_mode", None)
+            return await message.reply_text(_strip_tg_emoji(text), **kw)
+        except Exception as e2:
+            logger.error(f"safe_reply plain fallback failed: {e2}")
+            raise
 
 
 async def safe_edit(query, text, **kw):
@@ -472,8 +484,20 @@ async def safe_edit(query, text, **kw):
         return await query.edit_message_text(text, parse_mode=ParseMode.HTML, **kw)
     except Exception as e:
         if _is_entity_error(e):
-            return await query.edit_message_text(_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kw)
-        raise
+            logger.warning(f"safe_edit tg-emoji fail, retry: {e}")
+            try:
+                return await query.edit_message_text(_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kw)
+            except Exception as e2:
+                logger.error(f"safe_edit retry failed: {e2}")
+                kw.pop("parse_mode", None)
+                return await query.edit_message_text(_strip_tg_emoji(text), **kw)
+        logger.error(f"safe_edit HTTP error: {e} | text={text[:200]}")
+        try:
+            kw.pop("parse_mode", None)
+            return await query.edit_message_text(_strip_tg_emoji(text), **kw)
+        except Exception as e2:
+            logger.error(f"safe_edit plain fallback failed: {e2}")
+            raise
 
 
 async def safe_send(bot, chat_id, text, **kw):
@@ -481,8 +505,20 @@ async def safe_send(bot, chat_id, text, **kw):
         return await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML, **kw)
     except Exception as e:
         if _is_entity_error(e):
-            return await bot.send_message(chat_id=chat_id, text=_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kw)
-        raise
+            logger.warning(f"safe_send tg-emoji fail, retry: {e}")
+            try:
+                return await bot.send_message(chat_id=chat_id, text=_strip_tg_emoji(text), parse_mode=ParseMode.HTML, **kw)
+            except Exception as e2:
+                logger.error(f"safe_send retry failed: {e2}")
+                kw.pop("parse_mode", None)
+                return await bot.send_message(chat_id=chat_id, text=_strip_tg_emoji(text), **kw)
+        logger.error(f"safe_send HTTP error: {e} | text={text[:200]}")
+        try:
+            kw.pop("parse_mode", None)
+            return await bot.send_message(chat_id=chat_id, text=_strip_tg_emoji(text), **kw)
+        except Exception as e2:
+            logger.error(f"safe_send plain fallback failed: {e2}")
+            raise
 
 
 def format_key_display(key, lang="vi"):
@@ -1644,7 +1680,7 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ============================================================
-# TEXT HANDLER (FIX: filters.ALL)
+# TEXT HANDLER (FIX: filters.TEXT | filters.CAPTION)
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -2647,11 +2683,16 @@ async def main():
         admin_import_products
     ))
 
-    # FIX: filters.ALL — handler tự kiểm tra bên trong
+    # FIX: filters.TEXT | filters.CAPTION — typed đúng cho Message
+    app.add_handler(MessageHandler(
+        filters.TEXT | filters.CAPTION,
+        handle_user_text
+    ))
+    # Fallback group 1: bắt mọi update còn sót
     app.add_handler(MessageHandler(
         filters.ALL,
         handle_user_text
-    ))
+    ), group=1)
 
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
     app.add_handler(CallbackQueryHandler(confirm_send_email_callback, pattern=r"^cfmsend_\d+$"))
@@ -2680,6 +2721,12 @@ async def main():
     app.add_handler(CallbackQueryHandler(topup_binance_callback, pattern=r"^topup_binance_\d+$"))
     app.add_handler(CallbackQueryHandler(topup_check_callback, pattern=r"^topup_check_\d+$"))
     app.add_handler(CallbackQueryHandler(pay_wallet_callback, pattern=r"^pay_wallet_\d+$"))
+
+    # Debug: log handlers đã đăng ký
+    total = sum(len(h) for h in app.handlers.values())
+    logger.info(f"Total handlers registered: {total}")
+    for grp, handlers in app.handlers.items():
+        logger.info(f"  Group {grp}: {len(handlers)} handlers")
 
     await app.initialize()
     await app.start()
