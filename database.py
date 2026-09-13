@@ -411,7 +411,7 @@ def subtract_balance(user_id, amount):
 
 
 # ============================================================
-# TOPUP STATE (FIX: lưu DB tránh mất khi restart)
+# TOPUP STATE (FIX)
 # ============================================================
 def set_topup_state(user_id, state: bool):
     _get_db().users.update_one(
