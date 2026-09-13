@@ -10,6 +10,9 @@ from config import Config
 logger = logging.getLogger(__name__)
 PAYOS_BASE_URL = "https://api-merchant.payos.vn/v2"
 
+_session = requests.Session()
+_session.headers.update({"User-Agent": "ShopBot/1.0"})
+
 
 def create_payment_link(order_code, amount, description, buyer_name=None, buyer_email=None):
     headers = {
@@ -41,9 +44,9 @@ def create_payment_link(order_code, amount, description, buyer_name=None, buyer_
         hashlib.sha256
     ).hexdigest()
     try:
-        r = requests.post(
+        r = _session.post(
             f"{PAYOS_BASE_URL}/payment-requests",
-            headers=headers, json=payload, timeout=10
+            headers=headers, json=payload, timeout=8
         )
         d = r.json()
         if d.get("code") == "00":
@@ -79,13 +82,13 @@ def verify_payment_webhook(body, sig_header=None):
 
 def get_payment_status(order_code):
     try:
-        r = requests.get(
+        r = _session.get(
             f"{PAYOS_BASE_URL}/payment-requests/{order_code}",
             headers={
                 "x-client-id": Config.PAYOS_CLIENT_ID,
                 "x-api-key": Config.PAYOS_API_KEY,
             },
-            timeout=10
+            timeout=8
         )
         return r.json()
     except Exception as e:
