@@ -34,7 +34,10 @@ from database import (
 )
 from payos_client import create_payment_link, verify_payment_webhook, get_payment_status
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 init_db()
 
@@ -53,8 +56,12 @@ def _fetch_binance_p2p():
         "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
         "https://p2p.binance.com/bapi/c2c/v2/public/c2c/adv/search",
     ]
-    payload = {"asset": "USDT", "fiat": "VND", "merchantCheck": False, "page": 1,
-               "payTypes": [], "publisherType": None, "rows": 5, "tradeType": "SELL"}
+    payload = {
+        "asset": "USDT", "fiat": "VND",
+        "merchantCheck": False, "page": 1,
+        "payTypes": [], "publisherType": None,
+        "rows": 5, "tradeType": "SELL"
+    }
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8",
@@ -87,8 +94,7 @@ def _fetch_binance_p2p():
             if len(prices) >= 3:
                 sp = sorted(prices)
                 avg = sum(sp[1:-1]) / (len(sp) - 2)
-            else:
-                avg = sum(prices) / len(prices)
+            else                avg = sum(prices) / len(prices)
             return round(avg, 2), ""
         except Exception as e:
             last_err = str(e)
@@ -116,8 +122,11 @@ def get_binance_rate_live():
         return manual, "Manual (auto OFF)", ""
     now = time.time()
     if _binance_rate_cache["rate"] and (now - _binance_rate_cache["ts"]) < BINANCE_CACHE_TTL:
-        return (_binance_rate_cache["rate"], _binance_rate_cache["source"],
-                _binance_rate_cache.get("error", ""))
+        return (
+            _binance_rate_cache["rate"],
+            _binance_rate_cache["source"],
+            _binance_rate_cache.get("error", "")
+        )
     live, err1 = _fetch_binance_p2p()
     if live and live > 0:
         _binance_rate_cache = {"rate": live, "ts": now, "source": "Binance P2P", "error": ""}
@@ -126,7 +135,10 @@ def get_binance_rate_live():
     if fb and fb > 0:
         _binance_rate_cache = {"rate": fb, "ts": now, "source": "er-api (fallback)", "error": err1}
         return fb, "er-api (fallback)", err1
-    _binance_rate_cache = {"rate": manual, "ts": now, "source": "Manual (API lỗi)", "error": f"{err1} | {err2}"}
+    _binance_rate_cache = {
+        "rate": manual, "ts": now,
+        "source": "Manual (API lỗi)", "error": f"{err1} | {err2}"
+    }
     return manual, "Manual (API lỗi)", f"{err1} | {err2}"
 
 
@@ -140,18 +152,29 @@ DEFAULT_TEXTS = {
         "shop_prompt": "Chọn sản phẩm bên dưới:",
         "no_more": "Không còn sản phẩm nào.",
         "list_title": "Danh sách sản phẩm (trang {page})",
-        "btn_prev": "Trước", "btn_next": "Sau", "btn_orders": "Đơn hàng chờ",
-        "btn_buy": "Mua ngay", "btn_back": "Quay lại",
-        "btn_check": "Đã thanh toán? Kiểm tra", "btn_cancel": "Hủy đơn",
-        "btn_back_pay": "Quay lại thanh toán", "btn_back_menu": "Quay lại menu",
+        "btn_prev": "Trước",
+        "btn_next": "Sau",
+        "btn_orders": "Đơn hàng chờ",
+        "btn_buy": "Mua ngay",
+        "btn_back": "Quay lại",
+        "btn_check": "Đã thanh toán? Kiểm tra",
+        "btn_cancel": "Hủy đơn",
+        "btn_back_pay": "Quay lại thanh toán",
+        "btn_back_menu": "Quay lại menu",
         "not_found": "Không tìm thấy sản phẩm.",
         "out_of_stock": "Sản phẩm đã hết hàng.",
         "invalid_data": "Dữ liệu không hợp lệ.",
-        "detail_title": "Chi tiết sản phẩm", "detail_name": "Tên", "detail_desc": "Mô tả",
-        "detail_price": "Giá", "detail_stock": "Tồn kho", "detail_sold": "Đã bán",
+        "detail_title": "Chi tiết sản phẩm",
+        "detail_name": "Tên",
+        "detail_desc": "Mô tả",
+        "detail_price": "Giá",
+        "detail_stock": "Tồn kho",
+        "detail_sold": "Đã bán",
         "detail_no_desc": "(không có mô tả)",
-        "order_title": "Đơn hàng", "order_product": "Sản phẩm",
-        "order_amount": "Số tiền", "order_pay": "Nhấn để thanh toán",
+        "order_title": "Đơn hàng",
+        "order_product": "Sản phẩm",
+        "order_amount": "Số tiền",
+        "order_pay": "Nhấn để thanh toán",
         "order_content": "Nội dung CK",
         "order_hint": "Sau khi thanh toán, nhấn 'Đã thanh toán? Kiểm tra' bên dưới.",
         "order_not_found": "Không tìm thấy đơn hàng.",
@@ -165,13 +188,16 @@ DEFAULT_TEXTS = {
         "pending_title": "Đơn hàng chờ thanh toán",
         "pending_empty": "Bạn không có đơn hàng nào đang chờ.",
         "account_info": "Thông tin tài khoản",
-        "account_user": "Tài khoản", "account_pass": "Mật khẩu",
+        "account_user": "Tài khoản",
+        "account_pass": "Mật khẩu",
         "payment_method_title": "Chọn phương thức thanh toán:",
         "btn_pay_payos": "Thanh toán VND (PayOS)",
         "btn_pay_binance": "Thanh toán USDT (Binance)",
         "binance_title": "Thanh toán Binance USDT",
-        "binance_amount": "Số tiền", "binance_address": "Địa chỉ ví",
-        "binance_network": "Mạng", "binance_memo": "Nội dung/Memo",
+        "binance_amount": "Số tiền",
+        "binance_address": "Địa chỉ ví",
+        "binance_network": "Mạng",
+        "binance_memo": "Nội dung/Memo",
         "binance_rate": "Tỷ giá",
         "binance_note": "Chuyển đúng số tiền và mạng. Ghi đúng nội dung để admin xác nhận.",
         "binance_not_set": "Admin chưa cấu hình ví Binance.",
@@ -180,15 +206,16 @@ DEFAULT_TEXTS = {
         "lang_changed": "Đã đổi ngôn ngữ: Tiếng Việt",
         "lang_choose": "Chọn ngôn ngữ để tiếp tục:",
         "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
-        "btn_lang_vi": "Tiếng Việt", "btn_lang_en": "English",
-        "youtube_email_ask": "📧 Vui lòng gửi <b>email YouTube</b> của bạn cho bot để admin thêm vào team.\n\n<i>Ví dụ: yourname@gmail.com</i>",
-        "youtube_email_received": "📧 Đã nhận email: <code>{email}</code>\n\n⏳ Admin sẽ thêm bạn vào team trong ít phút. Vui lòng đợi.",
-        "youtube_email_pending": "📧 Email: <code>{email}</code>\n\n⏳ Đang chờ admin thêm vào team. Vui lòng đợi.",
-        "youtube_email_done": "🎉 <b>Hoàn tất!</b>\n\nEmail <code>{email}</code> đã được thêm vào team.\nVui lòng kiểm tra hộp thư để nhận lời mời.",
-        "youtube_email_invalid": "❌ Email không hợp lệ. Vui lòng gửi lại (ví dụ: yourname@gmail.com).",
-        "youtube_email_paid_msg": "✅ <b>Thanh toán thành công!</b>\n\n📧 Vui lòng gửi <b>email YouTube</b> của bạn cho bot để admin thêm vào team.",
-        "admin_email_request_title": "📧 <b>Yêu cầu thêm vào team</b>",
-        "admin_email_confirm_btn": "✅ Đã thêm vào team",
+        "btn_lang_vi": "Tiếng Việt",
+        "btn_lang_en": "English",
+        "youtube_email_ask": "Vui lòng gửi email YouTube của bạn cho bot để admin thêm vào team.\n\nVí dụ: yourname@gmail.com",
+        "youtube_email_received": "Đã nhận email: {email}\n\nAdmin sẽ thêm bạn vào team trong ít phút. Vui lòng đợi.",
+        "youtube_email_pending": "Email: {email}\n\nĐang chờ admin thêm vào team. Vui lòng đợi.",
+        "youtube_email_done": "Hoàn tất!\n\nEmail {email} đã được thêm vào team.\nVui lòng kiểm tra hộp thư để nhận lời mời.",
+        "youtube_email_invalid": "Email không hợp lệ. Vui lòng gửi lại (ví dụ: yourname@gmail.com).",
+        "youtube_email_paid_msg": "Thanh toán thành công!\n\nVui lòng gửi email YouTube của bạn cho bot để admin thêm vào team.",
+        "admin_email_request_title": "Yêu cầu thêm vào team",
+        "admin_email_confirm_btn": "Đã thêm vào team",
     },
     "en": {
         "shop_empty": "No products available yet.",
@@ -196,18 +223,29 @@ DEFAULT_TEXTS = {
         "shop_prompt": "Choose a product below:",
         "no_more": "No more products.",
         "list_title": "Products (page {page})",
-        "btn_prev": "Prev", "btn_next": "Next", "btn_orders": "Pending orders",
-        "btn_buy": "Buy now", "btn_back": "Back",
-        "btn_check": "Paid? Check now", "btn_cancel": "Cancel order",
-        "btn_back_pay": "Back to payment", "btn_back_menu": "Back to menu",
+        "btn_prev": "Prev",
+        "btn_next": "Next",
+        "btn_orders": "Pending orders",
+        "btn_buy": "Buy now",
+        "btn_back": "Back",
+        "btn_check": "Paid? Check now",
+        "btn_cancel": "Cancel order",
+        "btn_back_pay": "Back to payment",
+        "btn_back_menu": "Back to menu",
         "not_found": "Product not found.",
         "out_of_stock": "Out of stock.",
         "invalid_data": "Invalid data.",
-        "detail_title": "Product details", "detail_name": "Name", "detail_desc": "Description",
-        "detail_price": "Price", "detail_stock": "Stock", "detail_sold": "Sold",
+        "detail_title": "Product details",
+        "detail_name": "Name",
+        "detail_desc": "Description",
+        "detail_price": "Price",
+        "detail_stock": "Stock",
+        "detail_sold": "Sold",
         "detail_no_desc": "(no description)",
-        "order_title": "Order", "order_product": "Product",
-        "order_amount": "Amount", "order_pay": "Click to pay",
+        "order_title": "Order",
+        "order_product": "Product",
+        "order_amount": "Amount",
+        "order_pay": "Click to pay",
         "order_content": "Payment ref",
         "order_hint": "After payment, press 'Paid? Check now' below.",
         "order_not_found": "Order not found.",
@@ -221,13 +259,16 @@ DEFAULT_TEXTS = {
         "pending_title": "Pending orders",
         "pending_empty": "You have no pending orders.",
         "account_info": "Account info",
-        "account_user": "Username", "account_pass": "Password",
+        "account_user": "Username",
+        "account_pass": "Password",
         "payment_method_title": "Choose payment method:",
         "btn_pay_payos": "Pay VND (PayOS)",
         "btn_pay_binance": "Pay USDT (Binance)",
         "binance_title": "Binance USDT Payment",
-        "binance_amount": "Amount", "binance_address": "Wallet address",
-        "binance_network": "Network", "binance_memo": "Memo",
+        "binance_amount": "Amount",
+        "binance_address": "Wallet address",
+        "binance_network": "Network",
+        "binance_memo": "Memo",
         "binance_rate": "Rate",
         "binance_note": "Send exact amount on correct network with memo.",
         "binance_not_set": "Binance wallet not configured.",
@@ -236,15 +277,16 @@ DEFAULT_TEXTS = {
         "lang_changed": "Language changed to English",
         "lang_choose": "Choose language to continue:",
         "lang_required": "Please select a language to continue:",
-        "btn_lang_vi": "Tiếng Việt", "btn_lang_en": "English",
-        "youtube_email_ask": "📧 Please send your <b>YouTube email</b> to the bot so admin can add you to the team.\n\n<i>Example: yourname@gmail.com</i>",
-        "youtube_email_received": "📧 Email received: <code>{email}</code>\n\n⏳ Admin will add you shortly. Please wait.",
-        "youtube_email_pending": "📧 Email: <code>{email}</code>\n\n⏳ Waiting for admin confirmation. Please wait.",
-        "youtube_email_done": "🎉 <b>Done!</b>\n\nEmail <code>{email}</code> has been added to the team.\nCheck your inbox for invitation.",
-        "youtube_email_invalid": "❌ Invalid email. Please resend (e.g., yourname@gmail.com).",
-        "youtube_email_paid_msg": "✅ <b>Payment successful!</b>\n\n📧 Please send your <b>YouTube email</b> to the bot so admin can add you to the team.",
-        "admin_email_request_title": "📧 <b>Team request</b>",
-        "admin_email_confirm_btn": "✅ Added to team",
+        "btn_lang_vi": "Tiếng Việt",
+        "btn_lang_en": "English",
+        "youtube_email_ask": "Please send your YouTube email to the bot so admin can add you to the team.\n\nExample: yourname@gmail.com",
+        "youtube_email_received": "Email received: {email}\n\nAdmin will add you shortly. Please wait.",
+        "youtube_email_pending": "Email: {email}\n\nWaiting for admin confirmation. Please wait.",
+        "youtube_email_done": "Done!\n\nEmail {email} has been added to the team.\nCheck your inbox for invitation.",
+        "youtube_email_invalid": "Invalid email. Please resend (e.g., yourname@gmail.com).",
+        "youtube_email_paid_msg": "Payment successful!\n\nPlease send your YouTube email to the bot so admin can add you to the team.",
+        "admin_email_request_title": "Team request",
+        "admin_email_confirm_btn": "Added to team",
     }
 }
 
@@ -266,7 +308,7 @@ def t(user_id, key, **kwargs):
 TEXT_EMOJI_KEYS = {
     "shop_empty": "Thông báo shop trống",
     "shop_title": "Tiêu đề shop",
-    "shop_prompt": "Dòng 'Chọn sản phẩm...'",
+    "shop_prompt": "Dòng chọn sản phẩm",
     "pending_empty": "Khi user không có đơn chờ",
     "pending_title": "Tiêu đề danh sách đơn chờ",
     "order_hint": "Hướng dẫn sau thanh toán",
@@ -289,7 +331,7 @@ TEXT_EMOJI_KEYS = {
     "order_cannot_cancel": "Không thể hủy",
     "order_cancelled_ok": "Đã hủy",
     "detail_no_desc": "Không có mô tả",
-    "payment_method_title": "Tiêu đề chọn phương thức TT",
+    "payment_method_title": "Chọn phương thức TT",
     "youtube_email_ask": "Yêu cầu gửi email YouTube",
     "youtube_email_received": "Đã nhận email",
     "youtube_email_pending": "Chờ admin xác nhận email",
@@ -348,11 +390,17 @@ async def safe_edit(query, text, **kw):
 
 async def safe_send(bot, chat_id, text, **kw):
     try:
-        return await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML, **kw)
+        return await bot.send_message(
+            chat_id=chat_id, text=text,
+            parse_mode=ParseMode.HTML, **kw
+        )
     except Exception as e:
         if _is_entity_error(e):
             clean = _strip_tg_emoji(text)
-            return await bot.send_message(chat_id=chat_id, text=clean, parse_mode=ParseMode.HTML, **kw)
+            return await bot.send_message(
+                chat_id=chat_id, text=clean,
+                parse_mode=ParseMode.HTML, **kw
+            )
         raise
 
 
@@ -364,7 +412,10 @@ def format_key_display(key, lang="vi"):
     for sep in ("|", ":"):
         if sep in key:
             a, _, p = key.partition(sep)
-            return f"{ul}: <code>{html.escape(a.strip())}</code>\n{pl}: <code>{html.escape(p.strip())}</code>"
+            return (
+                f"{ul}: <code>{html.escape(a.strip())}</code>\n"
+                f"{pl}: <code>{html.escape(p.strip())}</code>"
+            )
     return f"<code>{html.escape(key)}</code>"
 
 
@@ -372,16 +423,29 @@ def format_key_display(key, lang="vi"):
 # UI EMOJI
 # ============================================================
 UI_KEYS = {
-    "shop": "Tiêu đề shop", "cart": "Nút mua", "orders": "Nút đơn hàng chờ",
-    "back": "Nút quay lại", "next": "Nút trang sau", "prev": "Nút trang trước",
-    "check": "Nút kiểm tra thanh toán", "cancel": "Nút hủy đơn",
-    "pay": "Nút thanh toán chung", "pay_payos": "Nút PayOS", "pay_binance": "Nút Binance",
-    "binance": "Biểu tượng ví Binance", "order": "Biểu tượng đơn hàng",
-    "order_code": "Nhãn mã đơn hàng", "money": "Nhãn tiền/giá",
-    "product": "Nhãn sản phẩm", "detail": "Nhãn chi tiết",
-    "back_pay": "Nút quay lại thanh toán", "back_menu": "Nút quay lại menu",
-    "lang": "Biểu tượng ngôn ngữ", "account": "Biểu tượng tài khoản",
-    "key_icon": "Biểu tượng key", "email": "Biểu tượng email",
+    "shop": "Tiêu đề shop",
+    "cart": "Nút mua",
+    "orders": "Nút đơn hàng chờ",
+    "back": "Nút quay lại",
+    "next": "Nút trang sau",
+    "prev": "Nút trang trước",
+    "check": "Nút kiểm tra thanh toán",
+    "cancel": "Nút hủy đơn",
+    "pay": "Nút thanh toán chung",
+    "pay_payos": "Nút PayOS",
+    "pay_binance": "Nút Binance",
+    "binance": "Biểu tượng ví Binance",
+    "order": "Biểu tượng đơn hàng",
+    "order_code": "Nhãn mã đơn hàng",
+    "money": "Nhãn tiền/giá",
+    "product": "Nhãn sản phẩm",
+    "detail": "Nhãn chi tiết",
+    "back_pay": "Nút quay lại thanh toán",
+    "back_menu": "Nút quay lại menu",
+    "lang": "Biểu tượng ngôn ngữ",
+    "account": "Biểu tượng tài khoản",
+    "key_icon": "Biểu tượng key",
+    "email": "Biểu tượng email",
 }
 
 
@@ -514,14 +578,16 @@ async def _notify_admin_email_request(bot, order, email, tg_user):
         user_info = tg_user.full_name or "?"
     admin_text = (
         f"{t(0, 'admin_email_request_title')}\n\n"
-        f"• Order: <code>{order['order_code']}</code>\n"
-        f"• User: {html.escape(user_info)} (<code>{order['user_id']}</code>)\n"
-        f"• SP: {prod_name}\n"
-        f"• Email: <code>{html.escape(email)}</code>"
+        f"Order: <code>{order['order_code']}</code>\n"
+        f"User: {html.escape(user_info)} (<code>{order['user_id']}</code>)\n"
+        f"SP: {prod_name}\n"
+        f"Email: <code>{html.escape(email)}</code>"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(t(0, "admin_email_confirm_btn"),
-                              callback_data=f"cfemail_{order['order_code']}")]
+        [InlineKeyboardButton(
+            t(0, "admin_email_confirm_btn"),
+            callback_data=f"cfemail_{order['order_code']}"
+        )]
     ])
     for aid in Config.ADMIN_IDS:
         try:
@@ -537,8 +603,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     register_user(user.id, user.username, user.first_name, user.last_name)
     if not is_lang_set(user.id):
-        await safe_reply(update.message, t_html(user.id, "lang_required"),
-                         reply_markup=lang_buttons(uid=user.id))
+        await safe_reply(
+            update.message, t_html(user.id, "lang_required"),
+            reply_markup=lang_buttons(uid=user.id)
+        )
         return
     prods = list_products(limit=5, offset=0)
     if not prods:
@@ -547,14 +615,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ui_icon = ui_emoji_html("shop")
     title_body = t_html(user.id, "shop_title")
     title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
-    await safe_reply(update.message,
+    await safe_reply(
+        update.message,
         f"{title_html}\n\n{t_html(user.id, 'shop_prompt')}",
-        reply_markup=product_buttons(prods, page=0, uid=user.id))
+        reply_markup=product_buttons(prods, page=0, uid=user.id)
+    )
 
 
 async def lang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    await safe_reply(update.message, t_html(uid, "lang_choose"), reply_markup=lang_buttons(uid=uid))
+    await safe_reply(
+        update.message, t_html(uid, "lang_choose"),
+        reply_markup=lang_buttons(uid=uid)
+    )
 
 
 async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -572,9 +645,11 @@ async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ui_icon = ui_emoji_html("shop")
     title_body = t_html(uid, "shop_title")
     title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
-    await safe_edit(query,
+    await safe_edit(
+        query,
         f"{title_html}\n\n{t_html(uid, 'shop_prompt')}",
-        reply_markup=product_buttons(prods, page=0, uid=uid))
+        reply_markup=product_buttons(prods, page=0, uid=uid)
+    )
 
 
 async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -592,8 +667,11 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
     if not prods:
         await safe_edit(query, t_html(uid, "no_more"), reply_markup=None)
         return
-    await safe_edit(query, f"<b>{html.escape(t(uid, 'list_title', page=page+1))}</b>",
-                    reply_markup=product_buttons(prods, page, uid=uid))
+    await safe_edit(
+        query,
+        f"<b>{html.escape(t(uid, 'list_title', page=page+1))}</b>",
+        reply_markup=product_buttons(prods, page, uid=uid)
+    )
 
 
 async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -664,10 +742,15 @@ async def pay_payos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     p = get_product(order["product_id"])
     desc = f"DH{order_code}"
-    url, err = create_payment_link(order_code=order_code, amount=order["amount"],
-                                    description=desc, buyer_name=query.from_user.full_name)
+    url, err = create_payment_link(
+        order_code=order_code, amount=order["amount"],
+        description=desc, buyer_name=query.from_user.full_name
+    )
     if not url:
-        await safe_edit(query, f"Lỗi PayOS: {html.escape(str(err))}", reply_markup=None)
+        await safe_edit(
+            query, f"Lỗi PayOS: {html.escape(str(err))}",
+            reply_markup=None
+        )
         return
     name_html = product_name_html(p["name"], p.get("emoji_id")) if p else str(order["product_id"])
     order_icon = ui_emoji_html("order")
@@ -683,7 +766,11 @@ async def pay_payos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f'{pay_icon} <a href="{url}">{html.escape(t(uid, "order_pay"))}</a>\n\n'
         f"{t_html(uid, 'order_hint')}"
     )
-    await safe_edit(query, text, reply_markup=order_buttons(order_code, uid=uid), disable_web_page_preview=True)
+    await safe_edit(
+        query, text,
+        reply_markup=order_buttons(order_code, uid=uid),
+        disable_web_page_preview=True
+    )
 
 
 async def pay_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -733,16 +820,16 @@ async def binance_sent_callback(update: Update, context: ContextTypes.DEFAULT_TY
     uid = query.from_user.id
     try:
         order_code = int(query.data.split("_")[2])
- Gi    except (ValueError, IndexError):
-        returná
-    await safe_edit(query, t l_html(uid, "binance_waiting"), reply_markup=None)
+    except (ValueError, IndexError):
+        return
+    await safe_edit(query, t_html(uid, "binance_waiting"), reply_markup=None)
     order = get_order(order_code)
     if order:
         p = get_product(order["product_id"])
         rate, rate_source, _ = get_binance_rate_live()
         usdt = round(order["amount"] / rate, 2)
         admin_text = (
-            f"<b>Yêu cầu xác nhận Binance</b>\n"
+            f"Yêu cầu xác nhận Binance\n"
             f"Order: <code>{order_code}</code>\n"
             f"User: <code>{uid}</code>\n"
             f"SP: {html.escape(p['name']) if p else '?'}\n"
@@ -802,6 +889,7 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if order["status"] == "cancelled":
         await safe_edit(query, t_html(uid, "order_cancelled"), reply_markup=None)
         return
+
     if order["status"] == "paid":
         if email_flow:
             es = order.get("email_status")
@@ -809,21 +897,30 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_edit(query, t_html(uid, "youtube_email_ask"))
                 return
             if es == "pending_admin":
-                await safe_edit(query, t_html(uid, "youtube_email_pending",
-                                              email=html.escape(order.get("customer_email") or "")))
+                await safe_edit(query, t_html(
+                    uid, "youtube_email_pending",
+                    email=html.escape(order.get("customer_email") or "")
+                ))
                 return
             if es == "confirmed":
-                await safe_edit(query, t_html(uid, "youtube_email_done",
-                                              email=html.escape(order.get("customer_email") or "")))
+                await safe_edit(query, t_html(
+                    uid, "youtube_email_done",
+                    email=html.escape(order.get("customer_email") or "")
+                ))
                 return
-        await safe_edit(query,
+        await safe_edit(
+            query,
             f"{t_html(uid, 'order_paid')}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-            f"{format_key_display(order['key_assigned'] or '', get_user_lang(uid))}")
+            f"{format_key_display(order['key_assigned'] or '', get_user_lang(uid))}"
+        )
         return
 
     data = get_payment_status(order_code)
-    paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
+    paid = bool(
+        data and data.get("code") == "00"
+        and data.get("data", {}).get("status") == "PAID"
+    )
     if paid:
         if email_flow:
             update_order_status(order_code, "paid", None)
@@ -833,16 +930,20 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             key = get_available_key(order["product_id"])
             if key:
                 update_order_status(order_code, "paid", key)
-                await safe_edit(query,
+                await safe_edit(
+                    query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-                    f"{format_key_display(key, get_user_lang(uid))}")
+                    f"{format_key_display(key, get_user_lang(uid))}"
+                )
             else:
                 await safe_edit(query, t_html(uid, "order_no_key"), reply_markup=None)
     else:
-        await safe_edit(query,
+        await safe_edit(
+            query,
             f"#{order_code} {t_html(uid, 'order_pending')}",
-            reply_markup=order_buttons(order_code, uid=uid))
+            reply_markup=order_buttons(order_code, uid=uid)
+        )
 
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -892,37 +993,39 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not order:
         return
     set_order_email(order["order_code"], text)
-    await safe_reply(update.message, t_html(user.id, "youtube_email_received",
-                                            email=html.escape(text)))
+    await safe_reply(
+        update.message,
+        t_html(user.id, "youtube_email_received", email=html.escape(text))
+    )
     await _notify_admin_email_request(context.bot, order, text, user)
 
 
 # ============================================================
-# ADMIN CALLBACK - XÁC NHẬN EMAIL
+# ADMIN CALLBACK - CONFIRM EMAIL
 # ============================================================
 async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     admin_uid = query.from_user.id
     if admin_uid not in Config.ADMIN_IDS:
-        await query.answer("⛔ Không có quyền", show_alert=True)
+        await query.answer("Khong co quyen", show_alert=True)
         return
     try:
         oc = int(query.data.split("_")[1])
     except (ValueError, IndexError):
-        await query.answer("Lỗi dữ liệu", show_alert=True)
+        await query.answer("Loi du lieu", show_alert=True)
         return
     order = get_order(oc)
     if not order:
-        await query.answer("Không tìm thấy đơn", show_alert=True)
+        await query.answer("Khong tim thay don", show_alert=True)
         return
     if order.get("email_status") == "confirmed":
-        await query.answer("⚠️ Đã xác nhận trước đó", show_alert=True)
+        await query.answer("Da xac nhan truoc do", show_alert=True)
         return
     set_order_email_status(oc, "confirmed")
-    await query.answer("✅ Đã xác nhận")
+    await query.answer("Da xac nhan")
     try:
         await query.edit_message_text(
-            (query.message.text or "") + "\n\n✅ <b>ĐÃ XÁC NHẬN</b>",
+            (query.message.text or "") + "\n\nDA XAC NHAN",
             parse_mode=ParseMode.HTML
         )
     except Exception:
@@ -930,8 +1033,10 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
     user_uid = order["user_id"]
     email = order.get("customer_email") or ""
     try:
-        await safe_send(context.bot, user_uid,
-            t_html(user_uid, "youtube_email_done", email=html.escape(email)))
+        await safe_send(
+            context.bot, user_uid,
+            t_html(user_uid, "youtube_email_done", email=html.escape(email))
+        )
     except Exception as e:
         logger.error(f"Notify user {user_uid}: {e}")
 
@@ -941,26 +1046,26 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
-        await safe_reply(update.message, "⛔")
+        await safe_reply(update.message, "Khong co quyen")
         return
     try:
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
-        # FIX: xóa khoảng trắng trước dấu | (do emoji Premium hoặc copy-paste)
         clean = re.sub(r'\s+\|', '|', clean)
         parts = clean.split(maxsplit=4)
         if len(parts) < 4:
-            await safe_reply(update.message,
-                "<b>Cú pháp:</b>\n"
-                "<code>/add &lt;tên&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n"
-                "<code>/add &lt;tên&gt;|&lt;mô tả&gt; &lt;giá&gt; &lt;số_lượng&gt; [keys]</code>\n\n"
-                "<b>Ví dụ có mô tả:</b>\n"
+            await safe_reply(
+                update.message,
+                "<b>Cu phap:</b>\n"
+                "<code>/add &lt;ten&gt; &lt;gia&gt; &lt;so_luong&gt; [keys]</code>\n"
+                "<code>/add &lt;ten&gt;|&lt;mo_ta&gt; &lt;gia&gt; &lt;so_luong&gt; [keys]</code>\n\n"
+                "<b>Vi du co mo ta:</b>\n"
                 "<code>/add YouTube|YouTube Team 30D 3000 5</code>\n"
                 "<code>/add YouTube|YouTube Team 30D 3000 5 K1,K2,K3,K4,K5</code>\n\n"
-                "<b>Lưu ý:</b>\n"
-                "• Dấu <code>|</code> PHẢI dính liền tên (không khoảng trắng)\n"
-                "• Tên KHÔNG có dấu cách (dùng <code>_</code>)\n"
-                "• Giá và SL là số nguyên\n"
-                "• Keys cách nhau dấu <code>,</code>"
+                "<b>Luu y:</b>\n"
+                "- Dau <code>|</code> PHAI dinh lien ten (khong khoang trang)\n"
+                "- Ten KHONG co dau cach (dung <code>_</code>)\n"
+                "- Gia va SL la so nguyen\n"
+                "- Keys cach nhau dau <code>,</code>"
             )
             return
         np = parts[1]
@@ -970,7 +1075,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             name, description = np.strip(), ""
         if not name:
-            await safe_reply(update.message, "❌ Thiếu tên sản phẩm.")
+            await safe_reply(update.message, "Thieu ten san pham.")
             return
         price_str, stock_str = parts[2], parts[3]
         keys_str = parts[4] if len(parts) >= 5 else "-"
@@ -979,10 +1084,12 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if price <= 0:
                 raise ValueError()
         except ValueError:
-            await safe_reply(update.message,
-                f"ỗi: <code>{html.escape(price_str)}</code>\n"
-                f"Phải là số nguyên dương.\n"
-                f"<i>Kiểm tra: dấu <code>|</code> phải dính liền tên, không có khoảng trắng trước.</i>")
+            await safe_reply(
+                update.message,
+                f"Gia loi: <code>{html.escape(price_str)}</code>\n"
+                f"Phai la so nguyen duong.\n"
+                f"Kiem tra: dau <code>|</code> phai dinh lien ten."
+            )
             return
         keys_str = keys_str.strip()
         is_num = False
@@ -991,7 +1098,9 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_num = True
         except ValueError:
             pass
-        keys = [] if (keys_str in ("-", "") or is_num) else [k.strip() for k in keys_str.split(",") if k.strip()]
+        keys = [] if (keys_str in ("-", "") or is_num) else [
+            k.strip() for k in keys_str.split(",") if k.strip()
+        ]
         if keys:
             stock = len(keys)
         else:
@@ -1000,25 +1109,32 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if stock < 0:
                     raise ValueError()
             except ValueError:
-                await safe_reply(update.message, f"❌ SL lỗi: <code>{html.escape(stock_str)}</code>")
+                await safe_reply(
+                    update.message,
+                    f"SL loi: <code>{html.escape(stock_str)}</code>"
+                )
                 return
             stock = 0
         emoji_note = ""
         if emoji_id:
-            ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
+            ok = await validate_custom_emoji(
+                context.bot, update.effective_user.id, emoji_id
+            )
             if not ok:
-                emoji_note = "\n⚠️ Emoji không hiển thị được, đã bỏ."
+                emoji_note = "\nEmoji khong hien thi duoc, da bo."
                 emoji_id = None
         pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
-        desc_info = f"\nMô tả: {html.escape(description)}" if description else ""
-        await safe_reply(update.message,
-            f"✅ Đã thêm SP ID <code>{pid}</code>\n"
-            f"Tên: {html.escape(name)}{desc_info}\n"
-            f"Giá: {price:,} VND\nSL: {stock}\nKeys: {len(keys)}{emoji_note}\n\n"
-            f"<i>Bật email flow: <code>/setflow {pid} email</code></i>")
+        desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
+        await safe_reply(
+            update.message,
+            f"Da them SP ID <code>{pid}</code>\n"
+            f"Ten: {html.escape(name)}{desc_info}\n"
+            f"Gia: {price:,} VND\nSL: {stock}\nKeys: {len(keys)}{emoji_note}\n\n"
+            f"Bat email flow: <code>/setflow {pid} email</code>"
+        )
     except Exception as e:
         logger.error(f"add: {e}", exc_info=True)
-        await safe_reply(update.message, f"❌ Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_setflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1026,28 +1142,32 @@ async def admin_setflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split()
     if len(parts) < 3:
-        await safe_reply(update.message,
-            "<b>Cú pháp:</b> <code>/setflow &lt;id&gt; &lt;email|key&gt;</code>\n\n"
-            "• <code>email</code> — thu email, admin thêm thủ công\n"
-            "• <code>key</code> — trả key tự động")
+        await safe_reply(
+            update.message,
+            "Cu phap: <code>/setflow &lt;id&gt; &lt;email|key&gt;</code>\n\n"
+            "- <code>email</code>: thu email, admin them thu cong\n"
+            "- <code>key</code>: tra key tu dong"
+        )
         return
     try:
         pid = int(parts[1])
     except ValueError:
-        await safe_reply(update.message, "ID không hợp lệ.")
+        await safe_reply(update.message, "ID khong hop le.")
         return
     flow = parts[2].lower()
     if flow not in ("email", "key"):
-        await safe_reply(update.message, "Flow phải là <code>email</code> hoặc <code>key</code>.")
+        await safe_reply(update.message, "Flow phai la email hoac key.")
         return
     p = get_product(pid)
     if not p:
-        await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>.")
+        await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
         return
     requires = (flow == "email")
     set_product_requires_email(pid, requires)
-    await safe_reply(update.message,
-        f"✅ SP <code>{pid}</code> ({html.escape(p['name'])}): flow = <b>{flow}</b>")
+    await safe_reply(
+        update.message,
+        f"SP <code>{pid}</code> ({html.escape(p['name'])}): flow = <b>{flow}</b>"
+    )
 
 
 async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1064,7 +1184,7 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
         except UnicodeDecodeError:
             content = raw.decode("utf-8-sig", errors="ignore")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi đọc: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi doc file: {html.escape(str(e))}")
         return
     ok, fail = [], []
     for ln, line in enumerate(content.splitlines(), 1):
@@ -1074,7 +1194,7 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             parts = [p.strip() for p in line.split("|")]
             if len(parts) < 3:
-                fail.append((ln, "cần ≥ 3 phần"))
+                fail.append((ln, "can >= 3 phan"))
                 continue
             if len(parts) == 3:
                 name, description, price_str, keys_str = parts[0], "", parts[1], parts[2]
@@ -1086,20 +1206,20 @@ async def admin_import_products(update: Update, context: ContextTypes.DEFAULT_TY
                 if price <= 0:
                     raise ValueError()
             except ValueError:
-                fail.append((ln, f"giá lỗi: {price_str}"))
+                fail.append((ln, f"gia loi: {price_str}"))
                 continue
             keys = [k.strip() for k in keys_str.split(",") if k.strip()] if keys_str and keys_str != "-" else []
             pid = add_product(name, description, price, len(keys), keys, emoji_id=None)
             ok.append((pid, name, price, len(keys)))
         except Exception as e:
             fail.append((ln, str(e)))
-    rpt = f"<b>Import {html.escape(doc.file_name or '')}</b>\n✅ {len(ok)} | ❌ {len(fail)}\n\n"
+    rpt = f"<b>Import {html.escape(doc.file_name or '')}</b>\nOK: {len(ok)} | Loi: {len(fail)}\n\n"
     for pid, name, price, stock in ok[:20]:
-        rpt += f"<code>{pid}</code> {html.escape(name)} - {price:,}đ - {stock}\n"
+        rpt += f"<code>{pid}</code> {html.escape(name)} - {price:,}d - {stock}\n"
     if fail:
-        rpt += "\n<b>Lỗi:</b>\n"
+        rpt += "\n<b>Loi:</b>\n"
         for ln, err in fail[:10]:
-            rpt += f"Dòng {ln}: {html.escape(err)}\n"
+            rpt += f"Dong {ln}: {html.escape(err)}\n"
     await safe_reply(update.message, rpt)
 
 
@@ -1109,24 +1229,27 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split(maxsplit=2)
         if len(parts) < 3:
-            await safe_reply(update.message, "Cú pháp: <code>/addkey &lt;id&gt; &lt;k1,k2,...&gt;</code>")
+            await safe_reply(update.message, "Cu phap: <code>/addkey &lt;id&gt; &lt;k1,k2,...&gt;</code>")
             return
         pid = int(parts[1])
         new_keys = [k.strip() for k in parts[2].split(",") if k.strip()]
         if not new_keys:
-            await safe_reply(update.message, "Cần ≥ 1 key.")
+            await safe_reply(update.message, "Can >= 1 key.")
             return
         p = get_product(pid)
         if not p:
-            await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>.")
+            await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
             return
         get_db().products.update_one(
             {"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
-        await safe_reply(update.message, f"Đã thêm {len(new_keys)} key. Tồn mới: {p['stock'] + len(new_keys)}")
+        await safe_reply(
+            update.message,
+            f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}"
+        )
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1136,24 +1259,24 @@ async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean.split()
         if len(parts) < 2:
-            await safe_reply(update.message, "Cú pháp: <code>/setemoji &lt;id&gt; [emoji]</code>")
+            await safe_reply(update.message, "Cu phap: <code>/setemoji &lt;id&gt; [emoji]</code>")
             return
         pid = int(parts[1])
         if not emoji_id:
-            await safe_reply(update.message, "Không tìm thấy custom emoji.")
+            await safe_reply(update.message, "Khong tim thay custom emoji.")
             return
         p = get_product(pid)
         if not p:
-            await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>.")
+            await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
             return
         ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
         if not ok:
-            await safe_reply(update.message, "⚠️ Bot không có quyền dùng emoji này.")
+            await safe_reply(update.message, "Bot khong co quyen dung emoji nay.")
             return
         get_db().products.update_one({"id": pid}, {"$set": {"emoji_id": emoji_id}})
-        await safe_reply(update.message, f"Đã đặt emoji cho SP <code>{pid}</code>.")
+        await safe_reply(update.message, f"Da dat emoji cho SP <code>{pid}</code>.")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_setdesc(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1162,18 +1285,18 @@ async def admin_setdesc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split(maxsplit=2)
         if len(parts) < 3:
-            await safe_reply(update.message, "Cú pháp: <code>/setdesc &lt;id&gt; &lt;mô tả&gt;</code>")
+            await safe_reply(update.message, "Cu phap: <code>/setdesc &lt;id&gt; &lt;mo ta&gt;</code>")
             return
         pid = int(parts[1])
         desc = parts[2].strip()
         p = get_product(pid)
         if not p:
-            await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>.")
+            await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
             return
         get_db().products.update_one({"id": pid}, {"$set": {"description": desc}})
-        await safe_reply(update.message, f"Đã đổi mô tả SP <code>{pid}</code>.")
+        await safe_reply(update.message, f"Da doi mo ta SP <code>{pid}</code>.")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1182,31 +1305,31 @@ async def admin_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split()
         if len(parts) < 2:
-            await safe_reply(update.message, "Cú pháp: <code>/detail &lt;id&gt;</code>")
+            await safe_reply(update.message, "Cu phap: <code>/detail &lt;id&gt;</code>")
             return
         pid = int(parts[1])
         p = get_product(pid)
         if not p:
-            await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>.")
+            await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
             return
         name_html = product_name_html(p["name"], p.get("emoji_id"))
-        desc = html.escape(p.get("description") or "(không có mô tả)")
+        desc = html.escape(p.get("description") or "(khong co mo ta)")
         keys = json.loads(p["keys"] or "[]")
-        flow = "📧 email" if p.get("requires_email") else "🔑 key"
+        flow = "email" if p.get("requires_email") else "key"
         text = (
-            f"<b>SP #{p['id']}</b>\nTên: {name_html}\nMô tả: {desc}\n"
-            f"Giá: {p['price']:,} VND\nKho: {p['stock']}\nBán: {p['sold']}\n"
+            f"<b>SP #{p['id']}</b>\nTen: {name_html}\nMo ta: {desc}\n"
+            f"Gia: {p['price']:,} VND\nKho: {p['stock']}\nBan: {p['sold']}\n"
             f"Flow: <b>{flow}</b>\n"
-            f"Emoji ID: <code>{p.get('emoji_id') or 'chưa đặt'}</code>\n\n"
+            f"Emoji ID: <code>{p.get('emoji_id') or 'chua dat'}</code>\n\n"
             f"<b>Keys ({len(keys)}):</b>\n"
         )
         for i, k in enumerate(keys[:10], 1):
             text += f"  {i}. {format_key_display(k)}\n"
         if len(keys) > 10:
-            text += f"  <i>... và {len(keys) - 10} key khác</i>\n"
+            text += f"  ... va {len(keys) - 10} key khac\n"
         await safe_reply(update.message, text)
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1214,15 +1337,15 @@ async def admin_list_products(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     total = count_all_products()
     if total == 0:
-        await safe_reply(update.message, "Chưa có SP.")
+        await safe_reply(update.message, "Chua co SP.")
         return
     products = list_all_products(limit=20, offset=0)
     text = f"<b>SP ({len(products)}/{total}):</b>\n\n"
     for p in products:
-        flow = "📧" if p.get("requires_email") else "🔑"
-        text += f"<code>{p['id']}</code> {flow} {html.escape(p['name'])[:28]} - {p['price']:,}đ - kho:{p['stock']}\n"
+        flow = "[E]" if p.get("requires_email") else "[K]"
+        text += f"<code>{p['id']}</code> {flow} {html.escape(p['name'])[:28]} - {p['price']:,}d - kho:{p['stock']}\n"
     if total > 20:
-        text += f"\n<i>... {total - 20} SP khác</i> <code>/list2</code>"
+        text += f"\n... {total - 20} SP khac: <code>/list2</code>"
     text += "\n\n<code>/detail &lt;id&gt;</code> - <code>/del &lt;id&gt;</code>"
     await safe_reply(update.message, text)
 
@@ -1233,12 +1356,12 @@ async def admin_list2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = count_all_products()
     products = list_all_products(limit=20, offset=20)
     if not products:
-        await safe_reply(update.message, "Hết.")
+        await safe_reply(update.message, "Het.")
         return
     text = f"<b>Trang 2/{(total - 1) // 20 + 1}:</b>\n\n"
     for p in products:
-        flow = "📧" if p.get("requires_email") else "🔑"
-        text += f"<code>{p['id']}</code> {flow} {html.escape(p['name'])[:28]} - {p['price']:,}đ\n"
+        flow = "[E]" if p.get("requires_email") else "[K]"
+        text += f"<code>{p['id']}</code> {flow} {html.escape(p['name'])[:28]} - {p['price']:,}d\n"
     await safe_reply(update.message, text)
 
 
@@ -1248,17 +1371,20 @@ async def admin_delete_product(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         parts = update.message.text.split()
         if len(parts) < 2:
-            await safe_reply(update.message, "Cú pháp: <code>/del &lt;id&gt;</code>")
+            await safe_reply(update.message, "Cu phap: <code>/del &lt;id&gt;</code>")
             return
         pid = int(parts[1])
         p = get_product(pid)
         if not p:
-            await safe_reply(update.message, f"Không tìm thấy SP <code>{pid}</code>.")
+            await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
             return
         if delete_product(pid):
-            await safe_reply(update.message, f"Đã xóa SP <code>{pid}</code> - {html.escape(p['name'])}")
+            await safe_reply(
+                update.message,
+                f"Da xoa SP <code>{pid}</code> - {html.escape(p['name'])}"
+            )
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1266,10 +1392,10 @@ async def admin_delete_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split()
     if len(parts) < 2 or parts[1].lower() != "confirm":
-        await safe_reply(update.message, "Xóa TẤT CẢ. Xác nhận: <code>/delall confirm</code>")
+        await safe_reply(update.message, "Xoa TAT CA. Xac nhan: <code>/delall confirm</code>")
         return
     c = delete_all_products()
-    await safe_reply(update.message, f"Đã xóa {c} SP.")
+    await safe_reply(update.message, f"Da xoa {c} SP.")
 
 
 async def admin_confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1278,44 +1404,48 @@ async def admin_confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         parts = update.message.text.split()
         if len(parts) < 2:
-            await safe_reply(update.message, "Cú pháp: <code>/confirm &lt;order_code&gt;</code>")
+            await safe_reply(update.message, "Cu phap: <code>/confirm &lt;order_code&gt;</code>")
             return
         oc = int(parts[1])
         order = get_order(oc)
         if not order:
-            await safe_reply(update.message, "Không tìm thấy đơn.")
+            await safe_reply(update.message, "Khong tim thay don.")
             return
         if order["status"] != "pending":
-            await safe_reply(update.message, f"Đơn ở trạng thái <b>{order['status']}</b>.")
+            await safe_reply(update.message, f"Don o trang thai <b>{order['status']}</b>.")
             return
         product = get_product(order["product_id"])
         email_flow = bool(product and product.get("requires_email"))
         if email_flow:
             update_order_status(oc, "paid", None)
             set_order_email_status(oc, "awaiting")
-            await safe_reply(update.message, f"Đã xác nhận đơn <code>{oc}</code> (email flow).")
+            await safe_reply(update.message, f"Da xac nhan don <code>{oc}</code> (email flow).")
             try:
-                await safe_send(context.bot, order["user_id"],
-                    t_html(order["user_id"], "youtube_email_paid_msg"))
+                await safe_send(
+                    context.bot, order["user_id"],
+                    t_html(order["user_id"], "youtube_email_paid_msg")
+                )
             except Exception as e:
                 logger.error(f"notify: {e}")
         else:
             key = get_available_key(order["product_id"])
             if not key:
-                await safe_reply(update.message, "Hết key. Nạp trước.")
+                await safe_reply(update.message, "Het key. Nap truoc.")
                 return
             update_order_status(oc, "paid", key)
-            await safe_reply(update.message, f"Đã xác nhận đơn <code>{oc}</code>.")
+            await safe_reply(update.message, f"Da xac nhan don <code>{oc}</code>.")
             lang = get_user_lang(order["user_id"])
             try:
-                await safe_send(context.bot, order["user_id"],
+                await safe_send(
+                    context.bot, order["user_id"],
                     f"{t_html(order['user_id'], 'order_success')}\n\n"
                     f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
-                    f"{format_key_display(key, lang)}")
+                    f"{format_key_display(key, lang)}"
+                )
             except Exception as e:
                 logger.error(f"notify: {e}")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1323,7 +1453,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await safe_reply(update.message, "Cú pháp: <code>/broadcast &lt;nội dung&gt;</code>")
+        await safe_reply(update.message, "Cu phap: <code>/broadcast &lt;noi dung&gt;</code>")
         return
     msg = parts[1]
     users = get_all_user_ids()
@@ -1335,7 +1465,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(0.05)
         except Exception:
             fail += 1
-    await safe_reply(update.message, f"Broadcast xong. ✅ {sent} | ❌ {fail}")
+    await safe_reply(update.message, f"Broadcast xong. OK: {sent} | Loi: {fail}")
 
 
 # ============================================================
@@ -1356,29 +1486,35 @@ async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean.split()
         if len(parts) < 2:
-            txt = "<b>Cú pháp:</b> <code>/setui &lt;key&gt; [emoji]</code>\n\n"
-            txt += "<b>UI keys:</b>\n" + "\n".join(f"• <code>{k}</code> - {v}" for k, v in UI_KEYS.items())
-            txt += "\n\n<b>Text keys:</b>\n" + "\n".join(f"• <code>{k}</code> - {v}" for k, v in TEXT_EMOJI_KEYS.items())
+            txt = "<b>Cu phap:</b> <code>/setui &lt;key&gt; [emoji]</code>\n\n"
+            txt += "<b>UI keys:</b>\n" + "\n".join(
+                f"- <code>{k}</code> - {v}" for k, v in UI_KEYS.items()
+            )
+            txt += "\n\n<b>Text keys:</b>\n" + "\n".join(
+                f"- <code>{k}</code> - {v}" for k, v in TEXT_EMOJI_KEYS.items()
+            )
             await safe_reply(update.message, txt)
             return
         key = parts[1].lower()
         setting_key, _ = _resolve_setui_key(key)
         if not setting_key:
-            await safe_reply(update.message, f"Key lỗi: <code>{html.escape(key)}</code>")
+            await safe_reply(update.message, f"Key loi: <code>{html.escape(key)}</code>")
             return
         if not emoji_id:
-            await safe_reply(update.message, "Không tìm thấy custom emoji.")
+            await safe_reply(update.message, "Khong tim thay custom emoji.")
             return
         ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
         if not ok:
-            await safe_reply(update.message,
-                f"⚠️ Bot không có quyền dùng emoji này.\n"
-                f"Ép: <code>/setui_force {key} [emoji]</code>")
+            await safe_reply(
+                update.message,
+                f"Bot khong co quyen dung emoji nay.\n"
+                f"Ep: <code>/setui_force {key} [emoji]</code>"
+            )
             return
         set_setting(setting_key, emoji_id)
-        await safe_reply(update.message, f"✅ Đã đặt emoji cho <code>{key}</code>.")
+        await safe_reply(update.message, f"Da dat emoji cho <code>{key}</code>.")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_setui_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1388,17 +1524,17 @@ async def admin_setui_force(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean.split()
         if len(parts) < 2 or not emoji_id:
-            await safe_reply(update.message, "Cú pháp: <code>/setui_force &lt;key&gt; [emoji]</code>")
+            await safe_reply(update.message, "Cu phap: <code>/setui_force &lt;key&gt; [emoji]</code>")
             return
         key = parts[1].lower()
         setting_key, _ = _resolve_setui_key(key)
         if not setting_key:
-            await safe_reply(update.message, "Key lỗi.")
+            await safe_reply(update.message, "Key loi.")
             return
         set_setting(setting_key, emoji_id)
-        await safe_reply(update.message, f"⚠️ Ép lưu emoji cho <code>{key}</code>.")
+        await safe_reply(update.message, f"Ep luu emoji cho <code>{key}</code>.")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_viewui(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1408,11 +1544,11 @@ async def admin_viewui(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "<b>UI Emoji:</b>\n"
     for k, desc in UI_KEYS.items():
         eid = st.get(f"ui_{k}")
-        text += f"• <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>\n" if eid else "<i>chưa</i>\n")
+        text += f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>\n" if eid else "chua\n")
     text += "\n<b>Text Emoji:</b>\n"
     for k, desc in TEXT_EMOJI_KEYS.items():
         eid = st.get(f"text_{k}")
-        text += f"• <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>\n" if eid else "<i>chưa</i>\n")
+        text += f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>\n" if eid else "chua\n")
     await safe_reply(update.message, text)
 
 
@@ -1421,15 +1557,15 @@ async def admin_delui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split()
     if len(parts) < 2:
-        await safe_reply(update.message, "Cú pháp: <code>/delui &lt;key&gt;</code>")
+        await safe_reply(update.message, "Cu phap: <code>/delui &lt;key&gt;</code>")
         return
     key = parts[1].lower()
     setting_key, _ = _resolve_setui_key(key)
     if not setting_key:
-        await safe_reply(update.message, "Key lỗi.")
+        await safe_reply(update.message, "Key loi.")
         return
     delete_setting(setting_key)
-    await safe_reply(update.message, f"Đã xóa emoji <code>{key}</code>.")
+    await safe_reply(update.message, f"Da xoa emoji <code>{key}</code>.")
 
 
 async def admin_testui(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1437,24 +1573,31 @@ async def admin_testui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split()
     if len(parts) < 2:
-        await safe_reply(update.message, "Cú pháp: <code>/testui &lt;key&gt;</code>")
+        await safe_reply(update.message, "Cu phap: <code>/testui &lt;key&gt;</code>")
         return
     key = parts[1].lower()
     if key in TEXT_EMOJI_KEYS:
         eid = get_setting(f"text_{key}")
         rendered = t_html(update.effective_user.id, key)
-        await safe_reply(update.message,
+        await safe_reply(
+            update.message,
             f"<b>Key:</b> <code>{key}</code>\n"
-            f"<b>Setting ID:</b> <code>{eid or 'chưa đặt'}</code>\n"
-            f"<b>Render:</b>\n{rendered}")
+            f"<b>Setting ID:</b> <code>{eid or 'chua dat'}</code>\n"
+            f"<b>Render:</b>\n{rendered}"
+        )
     elif key in UI_KEYS:
         eid = get_setting(f"ui_{key}")
-        kb = InlineKeyboardMarkup([[button("Test button", callback_data="test_noop", ui_key=key)]])
-        await safe_reply(update.message,
-            f"<b>Key:</b> <code>{key}</code> (UI)\n<b>Setting ID:</b> <code>{eid or 'chưa đặt'}</code>",
-            reply_markup=kb)
+        kb = InlineKeyboardMarkup([[
+            button("Test button", callback_data="test_noop", ui_key=key)
+        ]])
+        await safe_reply(
+            update.message,
+            f"<b>Key:</b> <code>{key}</code> (UI)\n"
+            f"<b>Setting ID:</b> <code>{eid or 'chua dat'}</code>",
+            reply_markup=kb
+        )
     else:
-        await safe_reply(update.message, f"Key không hợp lệ: <code>{key}</code>")
+        await safe_reply(update.message, f"Key khong hop le: <code>{key}</code>")
 
 
 async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1465,18 +1608,18 @@ async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN - TEXTS
 # ============================================================
 TEXT_KEYS_INFO = {
-    "shop_empty": "Thông báo shop trống",
-    "shop_title": "Tiêu đề shop",
-    "shop_prompt": "Dòng 'Chọn sản phẩm...'",
-    "pending_empty": "Khi user không có đơn chờ",
-    "order_hint": "Hướng dẫn sau thanh toán",
-    "order_success": "Thông báo thành công",
-    "binance_note": "Lưu ý Binance",
-    "lang_required": "Yêu cầu chọn ngôn ngữ",
-    "youtube_email_ask": "Yêu cầu gửi email YouTube",
-    "youtube_email_received": "Đã nhận email",
-    "youtube_email_pending": "Chờ admin xác nhận email",
-    "youtube_email_done": "Hoàn tất email",
+    "shop_empty": "Thong bao shop trong",
+    "shop_title": "Tieu de shop",
+    "shop_prompt": "Dong chon san pham",
+    "pending_empty": "Khi user khong co don cho",
+    "order_hint": "Huong dan sau thanh toan",
+    "order_success": "Thong bao thanh cong",
+    "binance_note": "Luu y Binance",
+    "lang_required": "Yeu cau chon ngon ngu",
+    "youtube_email_ask": "Yeu cau gui email YouTube",
+    "youtube_email_received": "Da nhan email",
+    "youtube_email_pending": "Cho admin xac nhan email",
+    "youtube_email_done": "Hoan tat email",
 }
 
 
@@ -1486,18 +1629,18 @@ async def admin_settext(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.split(maxsplit=3)
         if len(parts) < 4:
-            txt = "Cú pháp: <code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n\n"
-            txt += "\n".join(f"• <code>{k}</code> - {v}" for k, v in TEXT_KEYS_INFO.items())
+            txt = "Cu phap: <code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n\n"
+            txt += "\n".join(f"- <code>{k}</code> - {v}" for k, v in TEXT_KEYS_INFO.items())
             await safe_reply(update.message, txt)
             return
         lang, key, value = parts[1].lower(), parts[2].lower(), parts[3]
         if lang not in ("vi", "en"):
-            await safe_reply(update.message, "Lang phải là vi/en.")
+            await safe_reply(update.message, "Lang phai la vi/en.")
             return
         set_text(f"{lang}_{key}", value)
-        await safe_reply(update.message, f"✅ Đã đổi <code>{lang}_{key}</code>.")
+        await safe_reply(update.message, f"Da doi <code>{lang}_{key}</code>.")
     except Exception as e:
-        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_viewtext(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1506,10 +1649,10 @@ async def admin_viewtext(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ov = {t_["key"]: t_["value"] for t_ in get_all_texts()}
     text = "<b>Texts override:</b>\n\n"
     if not ov:
-        text += "<i>Chưa có override.</i>\n\n"
+        text += "Chua co override.\n\n"
     else:
         for k, v in ov.items():
-            text += f"• <code>{k}</code>\n  <i>{html.escape(v[:100])}</i>\n"
+            text += f"- <code>{k}</code>\n  {html.escape(v[:100])}\n"
     await safe_reply(update.message, text)
 
 
@@ -1518,11 +1661,11 @@ async def admin_deltext(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split()
     if len(parts) < 3:
-        await safe_reply(update.message, "Cú pháp: <code>/deltext &lt;lang&gt; &lt;key&gt;</code>")
+        await safe_reply(update.message, "Cu phap: <code>/deltext &lt;lang&gt; &lt;key&gt;</code>")
         return
     lang, key = parts[1].lower(), parts[2].lower()
     delete_text(f"{lang}_{key}")
-    await safe_reply(update.message, f"Đã xóa override <code>{lang}_{key}</code>.")
+    await safe_reply(update.message, f"Da xoa override <code>{lang}_{key}</code>.")
 
 
 # ============================================================
@@ -1533,17 +1676,22 @@ async def admin_setbinance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     parts = update.message.text.split()
     if len(parts) < 2:
-        await safe_reply(update.message,
-            "Cú pháp: <code>/setbinance &lt;address&gt; [TRC20|BEP20|ERC20|POLYGON]</code>")
+        await safe_reply(
+            update.message,
+            "Cu phap: <code>/setbinance &lt;address&gt; [TRC20|BEP20|ERC20|POLYGON]</code>"
+        )
         return
     addr = parts[1]
     net = parts[2].upper() if len(parts) >= 3 else "TRC20"
     if net not in ("TRC20", "BEP20", "ERC20", "POLYGON"):
-        await safe_reply(update.message, "Network không hợp lệ.")
+        await safe_reply(update.message, "Network khong hop le.")
         return
     set_binance_address(addr)
     set_binance_network(net)
-    await safe_reply(update.message, f"✅ Ví: <code>{html.escape(addr)}</code>\nNetwork: <b>{net}</b>")
+    await safe_reply(
+        update.message,
+        f"Vi: <code>{html.escape(addr)}</code>\nNetwork: <b>{net}</b>"
+    )
 
 
 async def admin_setrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1552,9 +1700,11 @@ async def admin_setrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = update.message.text.split()
     if len(parts) < 2:
         r_live, src, _ = get_binance_rate_live()
-        await safe_reply(update.message,
-            f"Rate hiện tại: <code>{r_live:,.0f}</code> ({html.escape(src)})\n"
-            f"Đặt: <code>/setrate 25000</code>")
+        await safe_reply(
+            update.message,
+            f"Rate hien tai: <code>{r_live:,.0f}</code> ({html.escape(src)})\n"
+            f"Dat: <code>/setrate 25000</code>"
+        )
         return
     try:
         r = int(parts[1].replace(".", "").replace(",", ""))
@@ -1563,9 +1713,9 @@ async def admin_setrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_usdt_rate(r)
         global _binance_rate_cache
         _binance_rate_cache = {"rate": None, "ts": 0, "source": "manual", "error": ""}
-        await safe_reply(update.message, f"✅ Rate thủ công: <code>{r:,}</code> VND/USDT")
+        await safe_reply(update.message, f"Rate thu cong: <code>{r:,}</code> VND/USDT")
     except ValueError:
-        await safe_reply(update.message, "Rate lỗi.")
+        await safe_reply(update.message, "Rate loi.")
 
 
 async def admin_viewbinance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1577,14 +1727,14 @@ async def admin_viewbinance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     live, src, err = get_binance_rate_live()
     txt = (
         f"<b>Binance</b>\n"
-        f"• Address: <code>{html.escape(a) if a else '(chưa)'}</code>\n"
-        f"• Network: <b>{n}</b>\n"
-        f"• Auto: <b>{'ON' if Config.BINANCE_AUTO_RATE else 'OFF'}</b>\n"
-        f"• Rate live: <code>{live:,.2f}</code> ({html.escape(src)})\n"
-        f"• Rate manual: <code>{manual:,}</code>"
+        f"Address: <code>{html.escape(a) if a else '(chua)'}</code>\n"
+        f"Network: <b>{n}</b>\n"
+        f"Auto: <b>{'ON' if Config.BINANCE_AUTO_RATE else 'OFF'}</b>\n"
+        f"Rate live: <code>{live:,.2f}</code> ({html.escape(src)})\n"
+        f"Rate manual: <code>{manual:,}</code>"
     )
     if err:
-        txt += f"\n\n⚠️ <b>Lỗi API:</b>\n<code>{html.escape(err[:250])}</code>"
+        txt += f"\n\nLoi API:\n<code>{html.escape(err[:250])}</code>"
     await safe_reply(update.message, txt)
 
 
@@ -1594,11 +1744,13 @@ async def admin_refreshrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global _binance_rate_cache
     _binance_rate_cache = {"rate": None, "ts": 0, "source": "manual", "error": ""}
     rate, src, err = get_binance_rate_live()
-    msg = (f"✅ Đã làm mới.\n"
-           f"• Rate: <code>{rate:,.2f}</code> VND/USDT\n"
-           f"• Nguồn: <b>{html.escape(src)}</b>")
+    msg = (
+        f"Da lam moi.\n"
+        f"Rate: <code>{rate:,.2f}</code> VND/USDT\n"
+        f"Nguon: <b>{html.escape(src)}</b>"
+    )
     if err:
-        msg += f"\n\n⚠️ <b>Lỗi API:</b>\n<code>{html.escape(err[:300])}</code>"
+        msg += f"\n\nLoi API:\n<code>{html.escape(err[:300])}</code>"
     await safe_reply(update.message, msg)
 
 
@@ -1606,11 +1758,15 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     live, src, _ = get_binance_rate_live()
-    await safe_reply(update.message,
-        f"<b>Stats</b>\nUsers: <code>{count_users()}</code>\n"
-        f"SP: <code>{count_all_products()}</code>\nCòn: <code>{count_products()}</code>\n"
-        f"Ví Binance: <code>{html.escape(get_binance_address()) or 'chưa'}</code>\n"
-        f"Rate: <code>{live:,.2f}</code> ({html.escape(src)})")
+    await safe_reply(
+        update.message,
+        f"<b>Stats</b>\n"
+        f"Users: <code>{count_users()}</code>\n"
+        f"SP: <code>{count_all_products()}</code>\n"
+        f"Con: <code>{count_products()}</code>\n"
+        f"Vi Binance: <code>{html.escape(get_binance_address()) or 'chua'}</code>\n"
+        f"Rate: <code>{live:,.2f}</code> ({html.escape(src)})"
+    )
 
 
 async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1618,17 +1774,17 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     txt = (
         "<b>Admin commands:</b>\n\n"
-        "<b>Sản phẩm:</b>\n"
-        "<code>/add Tên Giá SL [Keys]</code>\n"
-        "<code>/add Tên|Mô_tả Giá SL [Keys]</code>\n"
-        "<code>/setflow &lt;id&gt; email|key</code> — bật/tắt email flow\n"
-        "Gửi file <b>.txt</b> để import\n"
+        "<b>San pham:</b>\n"
+        "<code>/add Ten Gia SL [Keys]</code>\n"
+        "<code>/add Ten|Mo_ta Gia SL [Keys]</code>\n"
+        "<code>/setflow &lt;id&gt; email|key</code>\n"
+        "Gui file <b>.txt</b> de import\n"
         "<code>/list</code> / <code>/list2</code>\n"
         "<code>/detail &lt;id&gt;</code> / <code>/del &lt;id&gt;</code>\n"
         "<code>/delall confirm</code>\n\n"
         "<b>Keys:</b>\n"
         "<code>/addkey &lt;id&gt; K1,K2</code>\n"
-        "<code>/setdesc &lt;id&gt; Mô tả</code>\n"
+        "<code>/setdesc &lt;id&gt; Mo ta</code>\n"
         "<code>/setemoji &lt;id&gt; [emoji]</code>\n\n"
         "<b>Binance:</b>\n"
         "<code>/setbinance &lt;address&gt; [network]</code>\n"
@@ -1642,7 +1798,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>Texts:</b>\n"
         "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
         "<code>/viewtext</code> / <code>/deltext</code>\n\n"
-        "<b>Khác:</b>\n"
+        "<b>Khac:</b>\n"
         "<code>/broadcast &lt;msg&gt;</code>\n"
         "<code>/stats</code>"
     )
@@ -1650,7 +1806,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# HTTP
+# HTTP HANDLERS
 # ============================================================
 async def root_handler(request: Request):
     if request.method == "HEAD":
@@ -1713,8 +1869,10 @@ async def payos_webhook(request: Request):
                     update_order_status(oc, "paid", None)
                     set_order_email_status(oc, "awaiting")
                     try:
-                        await safe_send(app.bot, order["user_id"],
-                            t_html(order["user_id"], "youtube_email_paid_msg"))
+                        await safe_send(
+                            app.bot, order["user_id"],
+                            t_html(order["user_id"], "youtube_email_paid_msg")
+                        )
                     except Exception as e:
                         logger.error(f"notify: {e}")
                 else:
@@ -1723,10 +1881,12 @@ async def payos_webhook(request: Request):
                         update_order_status(oc, "paid", key)
                         lang = get_user_lang(order["user_id"])
                         try:
-                            await safe_send(app.bot, order["user_id"],
+                            await safe_send(
+                                app.bot, order["user_id"],
                                 f"{t_html(order['user_id'], 'order_success')}\n\n"
                                 f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
-                                f"{format_key_display(key, lang)}")
+                                f"{format_key_display(key, lang)}"
+                            )
                         except Exception as e:
                             logger.error(f"notify: {e}")
         return Response(text="OK", status=200)
@@ -1778,7 +1938,8 @@ async def main():
 
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
-        admin_import_products))
+        admin_import_products
+    ))
 
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
