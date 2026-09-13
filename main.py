@@ -197,6 +197,8 @@ DEFAULT_TEXTS = {
         "refreshed": "Đã load lại",
         "not_found": "Không tìm thấy sản phẩm.",
         "out_of_stock": "Sản phẩm đã hết hàng.",
+        "out_of_stock_wait": "Sản phẩm đã hết hàng. Vui lòng chờ admin thêm hàng.",
+        "stock_out_tag": "[HẾT HÀNG]",
         "invalid_data": "Dữ liệu không hợp lệ.",
         "detail_title": "Chi tiết sản phẩm",
         "detail_name": "Tên",
@@ -297,6 +299,8 @@ DEFAULT_TEXTS = {
         "refreshed": "Refreshed",
         "not_found": "Product not found.",
         "out_of_stock": "Out of stock.",
+        "out_of_stock_wait": "Out of stock. Please wait for admin to restock.",
+        "stock_out_tag": "[OUT]",
         "invalid_data": "Invalid data.",
         "detail_title": "Product details",
         "detail_name": "Name",
@@ -405,6 +409,7 @@ TEXT_EMOJI_KEYS = {
     "lang_changed": "Đã đổi ngôn ngữ",
     "not_found": "Không tìm thấy",
     "out_of_stock": "Hết hàng",
+    "out_of_stock_wait": "Thông báo hết hàng chờ admin",
     "invalid_data": "Dữ liệu không hợp lệ",
     "no_more": "Hết sản phẩm",
     "order_cannot_cancel": "Không thể hủy",
@@ -529,6 +534,7 @@ UI_KEYS = {
     "wallet": "Biểu tượng ví",
     "topup": "Nút nạp ví",
     "hide": "Biểu tượng ẩn",
+    "oos": "Biểu tượng hết hàng",
 }
 
 
@@ -602,9 +608,15 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
 # BUTTON BUILDERS
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
+    """Hiện TẤT CẢ SP — hết hàng có tag [HẾT HÀNG]."""
     kb = []
     for p in products:
-        text = f"{p['name']} - {p['price']:,}đ - còn {p['stock']}"
+        stock = int(p.get("stock", 0))
+        if stock > 0:
+            text = f"{p['name']} - {p['price']:,}đ - còn {stock}"
+        else:
+            tag = t(uid, "stock_out_tag")
+            text = f"{tag} {p['name']} - {p['price']:,}đ"
         kw = {"text": text, "callback_data": f"detail_{p['id']}"}
         if p.get("emoji_id"):
             kw["icon_custom_emoji_id"] = p["emoji_id"]
@@ -726,20 +738,6 @@ async def check_email_block(query, uid):
             pass
         return True
     return False
-
-
-async def goto_shop_menu(bot, chat_id, uid, message_text=None):
-    prods = list_products(limit=5, offset=0)
-    if not prods:
-        await safe_send(bot, chat_id, t_html(uid, "shop_empty"))
-        return
-    ui_icon = ui_emoji_html("shop")
-    title_body = t_html(uid, "shop_title")
-    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
-    text = f"{title_html}\n\n{t_html(uid, 'shop_prompt')}"
-    if message_text:
-        text = f"{message_text}\n\n{text}"
-    await safe_send(bot, chat_id, text, reply_markup=product_buttons(prods, page=0, uid=uid))
 
 
 # ============================================================
@@ -877,22 +875,39 @@ async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not p:
         await safe_edit(query, t_html(uid, "not_found"))
         return
+
+    stock = int(p.get("stock", 0))
     name_html = product_name_html(p["name"], p.get("emoji_id"))
     desc_raw = p.get("description") or ""
     if desc_raw:
         desc_html = html.escape(desc_raw)
     else:
         desc_html = f"<i>{html.escape(t(uid, 'detail_no_desc'))}</i>"
+
     money_icon = ui_emoji_html("money")
+    if stock > 0:
+        stock_html = str(stock)
+    else:
+        stock_html = f"<b>{html.escape(t(uid, 'stock_out_tag'))}</b>"
+
     text = (
         f"<b>{html.escape(t(uid, 'detail_title'))} #{p['id']}</b>\n\n"
         f"<b>{html.escape(t(uid, 'detail_name'))}:</b> {name_html}\n"
         f"{money_icon} <b>{html.escape(t(uid, 'detail_price'))}:</b> {p['price']:,} VND\n"
-        f"<b>{html.escape(t(uid, 'detail_stock'))}:</b> {p['stock']}\n"
+        f"<b>{html.escape(t(uid, 'detail_stock'))}:</b> {stock_html}\n"
         f"<b>{html.escape(t(uid, 'detail_sold'))}:</b> {p['sold']}\n\n"
         f"<b>{html.escape(t(uid, 'detail_desc'))}:</b>\n{desc_html}"
     )
-    await safe_edit(query, text, reply_markup=detail_buttons(pid, uid=uid))
+
+    if stock > 0:
+        kb = detail_buttons(pid, uid=uid)
+    else:
+        kb = InlineKeyboardMarkup([
+            [button(t(uid, "btn_back"), callback_data="back_list", ui_key="back")],
+        ])
+        text += f"\n\n⚠️ <b>{html.escape(t(uid, 'out_of_stock_wait'))}</b>"
+
+    await safe_edit(query, text, reply_markup=kb)
 
 
 async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -907,9 +922,13 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer(t(uid, "invalid_data"), show_alert=True)
         return
     p = get_product(pid)
-    if not p or p["stock"] <= 0:
-        await query.answer(t(uid, "out_of_stock"), show_alert=True)
+    if not p:
+        await query.answer(t(uid, "not_found"), show_alert=True)
         return
+    if int(p.get("stock", 0)) <= 0:
+        await query.answer(t(uid, "out_of_stock_wait"), show_alert=True)
+        return
+
     order_code = int(f"{int(datetime.now().timestamp())}{pid:03d}{uid % 1000:03d}")
     create_order(order_code, uid, pid, 1, p["price"])
 
@@ -1404,7 +1423,6 @@ async def recheck_cancelled_order_callback(update: Update, context: ContextTypes
 
 
 async def hide_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ẩn đơn cancelled khỏi danh sách (soft-hide)."""
     query = update.callback_query
     uid = query.from_user.id
     try:
@@ -1927,6 +1945,7 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
+        _invalidate_products_cache_from_main = None  # not needed, cache cleared by db module
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -2283,6 +2302,7 @@ TEXT_KEYS_INFO = {
     "youtube_email_preview": "Xem truoc email",
     "youtube_email_pending": "Cho admin xac nhan email",
     "youtube_email_done": "Hoan tat email",
+    "out_of_stock_wait": "Thong bao het hang cho admin",
 }
 
 
