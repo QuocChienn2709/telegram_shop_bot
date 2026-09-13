@@ -35,6 +35,7 @@ from database import (
     get_user_lang, set_user_lang, is_lang_set,
     get_all_user_ids, count_users,
     get_user_balance, add_balance, subtract_balance,
+    set_topup_state, get_topup_state,
     create_topup_order, mark_topup_paid,
     get_setting, set_setting, delete_setting, get_all_settings,
     get_text, set_text, delete_text, get_all_texts,
@@ -1465,12 +1466,13 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """FIX: gửi tin nhắn MỚI thay vì edit để chắc chắn hiện prompt nhập tiền."""
+    """FIX: lưu state DB + gửi message mới."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
     if await check_email_block(query, uid):
         return
+    set_topup_state(uid, True)
     context.user_data["topup_state"] = True
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_back"), callback_data="wallet", ui_key="back")],
@@ -1483,10 +1485,14 @@ async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """FIX: check state từ RAM HOẶC DB."""
     uid = update.effective_user.id
-    if not context.user_data.get("topup_state"):
+    state_ram = context.user_data.get("topup_state")
+    state_db = get_topup_state(uid)
+    if not (state_ram or state_db):
         return False
     context.user_data["topup_state"] = False
+    set_topup_state(uid, False)
     text = (update.message.text or "").strip().replace(".", "").replace(",", "")
     if not text.isdigit():
         await safe_reply(update.message, t_html(uid, "wallet_topup_invalid"))
@@ -1673,16 +1679,22 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ============================================================
-# TEXT HANDLER (email + topup)
+# TEXT HANDLER (FIX: bỏ filter User(ADMIN_IDS))
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    # Skip admin (họ không nạp ví / gửi email qua bot)
     if user.id in Config.ADMIN_IDS:
         return
+
     text_in = (update.message.text or "").strip()
     logger.info(f"handle_user_text: uid={user.id} text='{text_in[:30]}' topup_state={context.user_data.get('topup_state')}")
+
+    # 1. Topup
     if await handle_topup_amount(update, context):
         return
+
+    # 2. Email
     if not EMAIL_RE.match(text_in):
         return
     order = get_awaiting_email_order(user.id)
@@ -1770,7 +1782,7 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # ============================================================
-# ADMIN HANDLERS
+# ADMIN HANDLERS (giữ nguyên)
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -1950,6 +1962,7 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
+        _invalidate = None
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -2636,8 +2649,9 @@ async def main():
         admin_import_products
     ))
 
+    # FIX: bỏ & ~filters.User(Config.ADMIN_IDS) — hàm tự skip admin bên trong
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
+        filters.TEXT & ~filters.COMMAND,
         handle_user_text
     ))
 
