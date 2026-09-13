@@ -129,7 +129,6 @@ DEFAULT_TEXTS = {
 
 
 def t(user_id, key, **kwargs):
-    """Plain text, không có emoji."""
     lang = get_user_lang(user_id)
     if lang not in DEFAULT_TEXTS: lang = "vi"
     ov = get_text(f"{lang}_{key}")
@@ -141,7 +140,7 @@ def t(user_id, key, **kwargs):
 
 
 # ============================================================
-# TEXT KEYS có thể gắn custom emoji (dùng /setui <key> [emoji])
+# TEXT KEYS hỗ trợ emoji
 # ============================================================
 TEXT_EMOJI_KEYS = {
     "shop_empty":     "Thông báo shop trống",
@@ -183,7 +182,7 @@ def text_emoji_html(key, fallback="•"):
 
 def t_html(user_id, key, fallback_char="•", **kwargs):
     """
-    HTML text có emoji prefix (nếu có setting) + escape nội dung.
+    HTML text với emoji prefix (nếu có) + escape nội dung.
     Dùng cho mọi chỗ render ra Telegram.
     """
     base = t(user_id, key, **kwargs)
@@ -305,10 +304,25 @@ def product_name_html(name, emoji_id=None):
     return safe
 
 async def validate_custom_emoji(bot, chat_id, emoji_id):
+    """
+    Gửi thử + kiểm tra entity trả về.
+    - Nếu Telegram nhận tag → có entity custom_emoji → render OK.
+    - Nếu Telegram strip tag → không có entity → emoji không hiển thị.
+    """
     try:
-        m = await bot.send_message(chat_id=chat_id, text=f'<tg-emoji emoji-id="{emoji_id}">🎁</tg-emoji>', parse_mode=ParseMode.HTML)
+        m = await bot.send_message(
+            chat_id=chat_id,
+            text=f'<tg-emoji emoji-id="{emoji_id}">🎁</tg-emoji>',
+            parse_mode=ParseMode.HTML
+        )
+        has_entity = any(
+            e.type == "custom_emoji" and getattr(e, "custom_emoji_id", None) == emoji_id
+            for e in (m.entities or [])
+        )
         await m.delete()
-        return True
+        if not has_entity:
+            logger.warning(f"Emoji {emoji_id} bị Telegram strip — không render được")
+        return has_entity
     except Exception as e:
         logger.info(f"emoji validate fail: {e}")
         return False
@@ -381,12 +395,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update.message, t_html(user.id, "shop_empty"))
         return
 
-    header = ui_emoji_html("shop")
-    title_html = t_html(user.id, "shop_title")
-    if header:
-        title_html = f"{header} <b>{html.escape(t(user.id, 'shop_title'))}</b>"
-    else:
-        title_html = f"<b>{html.escape(t(user.id, 'shop_title'))}</b>"
+    ui_icon = ui_emoji_html("shop")
+    title_body = t_html(user.id, "shop_title")
+    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
 
     await safe_reply(
         update.message,
@@ -412,11 +423,11 @@ async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not prods:
         await safe_edit(query, t_html(uid, "shop_empty"))
         return
-    header = ui_emoji_html("shop")
-    if header:
-        title_html = f"{header} <b>{html.escape(t(uid, 'shop_title'))}</b>"
-    else:
-        title_html = f"<b>{html.escape(t(uid, 'shop_title'))}</b>"
+
+    ui_icon = ui_emoji_html("shop")
+    title_body = t_html(uid, "shop_title")
+    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
+
     await safe_edit(
         query,
         f"{title_html}\n\n{t_html(uid, 'shop_prompt')}",
@@ -485,7 +496,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{order_icon} <b>{html.escape(t(uid, 'order_title'))} #{order_code}</b>\n\n"
         f"{prod_icon} <b>{html.escape(t(uid, 'order_product'))}:</b> {name_html}\n"
         f"{money_icon} <b>{html.escape(t(uid, 'order_amount'))}:</b> {p['price']:,} VND\n\n"
-        f"{html.escape(t(uid, 'payment_method_title'))}"
+        f"{t_html(uid, 'payment_method_title')}"
     )
     await safe_reply(query.message, text, reply_markup=payment_buttons(order_code, uid=uid))
 
@@ -600,7 +611,7 @@ async def back_pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{order_icon} <b>{html.escape(t(uid, 'order_title'))} #{order_code}</b>\n\n"
         f"{prod_icon} <b>{html.escape(t(uid, 'order_product'))}:</b> {name_html}\n"
         f"{money_icon} <b>{html.escape(t(uid, 'order_amount'))}:</b> {order['amount']:,} VND\n\n"
-        f"{html.escape(t(uid, 'payment_method_title'))}"
+        f"{t_html(uid, 'payment_method_title')}"
     )
     await safe_edit(query, text, reply_markup=payment_buttons(order_code, uid=uid))
 
@@ -677,7 +688,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ADMIN HANDLERS
+# ADMIN - PRODUCTS
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -957,10 +968,9 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ADMIN - SETUI (hỗ trợ cả UI key và TEXT key)
+# ADMIN - SETUI (UI + Text)
 # ============================================================
 def _resolve_setui_key(key):
-    """Trả về (setting_key, kind) hoặc (None, None)."""
     if key in UI_KEYS:
         return f"ui_{key}", "ui"
     if key in TEXT_EMOJI_KEYS:
@@ -975,10 +985,8 @@ async def admin_setui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = clean.split()
         if len(parts) < 2:
             txt = "<b>Cú pháp:</b> <code>/setui &lt;key&gt; [emoji]</code>\n\n"
-            txt += "<b>UI keys (nút):</b>\n"
-            txt += "\n".join(f"• <code>{k}</code> - {v}" for k, v in UI_KEYS.items())
-            txt += "\n\n<b>Text keys (nội dung):</b>\n"
-            txt += "\n".join(f"• <code>{k}</code> - {v}" for k, v in TEXT_EMOJI_KEYS.items())
+            txt += "<b>UI keys (nút):</b>\n" + "\n".join(f"• <code>{k}</code> - {v}" for k, v in UI_KEYS.items())
+            txt += "\n\n<b>Text keys (nội dung):</b>\n" + "\n".join(f"• <code>{k}</code> - {v}" for k, v in TEXT_EMOJI_KEYS.items())
             txt += "\n\nĐặt: <code>/setui cart [dán emoji]</code>"
             await safe_reply(update.message, txt); return
         key = parts[1].lower()
@@ -1043,6 +1051,40 @@ async def admin_delui(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update.message, "Key lỗi."); return
     delete_setting(setting_key)
     await safe_reply(update.message, f"Đã xóa emoji <code>{key}</code>.")
+
+
+async def admin_testui(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Cú pháp: /testui <key>
+    Render thử text/emoji của key đó.
+    """
+    if update.effective_user.id not in Config.ADMIN_IDS: return
+    parts = update.message.text.split()
+    if len(parts) < 2:
+        keys = list(TEXT_EMOJI_KEYS.keys())
+        txt = "<b>Test 1 key:</b> <code>/testui &lt;key&gt;</code>\n\n"
+        txt += "<b>Text keys:</b>\n" + ", ".join(f"<code>{k}</code>" for k in keys)
+        txt += "\n\n<b>UI keys:</b>\n" + ", ".join(f"<code>{k}</code>" for k in UI_KEYS.keys())
+        await safe_reply(update.message, txt); return
+    key = parts[1].lower()
+    if key in TEXT_EMOJI_KEYS:
+        eid = get_setting(f"text_{key}")
+        rendered = t_html(update.effective_user.id, key)
+        await safe_reply(update.message,
+            f"<b>Key:</b> <code>{key}</code>\n"
+            f"<b>Setting ID:</b> <code>{eid or 'chưa đặt'}</code>\n"
+            f"<b>Render:</b>\n{rendered}")
+    elif key in UI_KEYS:
+        eid = get_setting(f"ui_{key}")
+        msg = f"<b>Key:</b> <code>{key}</code> (UI)\n<b>Setting ID:</b> <code>{eid or 'chưa đặt'}</code>"
+        kb = InlineKeyboardMarkup([[button("Test button", callback_data="test_noop", ui_key=key)]])
+        await safe_reply(update.message, msg, reply_markup=kb)
+    else:
+        await safe_reply(update.message, f"Key không hợp lệ: <code>{key}</code>")
+
+
+async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer("OK", show_alert=False)
 
 
 # ============================================================
@@ -1172,7 +1214,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<b>UI + Text Emoji:</b>\n"
         "<code>/setui &lt;key&gt; [emoji]</code>\n"
         "<code>/setui_force &lt;key&gt; [emoji]</code>\n"
-        "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n\n"
+        "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n"
+        "<code>/testui &lt;key&gt;</code> - test emoji render\n\n"
         "<b>Texts:</b>\n"
         "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
         "<code>/viewtext</code> / <code>/deltext &lt;lang&gt; &lt;key&gt;</code>\n\n"
@@ -1273,6 +1316,7 @@ async def main():
     app.add_handler(CommandHandler("setui_force", admin_setui_force))
     app.add_handler(CommandHandler("viewui", admin_viewui))
     app.add_handler(CommandHandler("delui", admin_delui))
+    app.add_handler(CommandHandler("testui", admin_testui))
 
     app.add_handler(CommandHandler("settext", admin_settext))
     app.add_handler(CommandHandler("viewtext", admin_viewtext))
@@ -1284,6 +1328,7 @@ async def main():
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products))
 
+    app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
     app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
