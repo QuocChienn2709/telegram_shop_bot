@@ -25,7 +25,7 @@ from telegram.constants import ParseMode
 from config import Config
 from database import (
     init_db, add_product, delete_product, delete_all_products,
-    set_product_requires_email,
+    set_product_requires_email, decrement_stock,
     get_product, list_products, count_products,
     list_all_products, count_all_products,
     get_available_key, create_order, get_order, update_order_status,
@@ -164,7 +164,7 @@ def get_binance_rate_live():
 
 
 # ============================================================
-# I18N - KHÔNG CÓ EMOJI TRONG TEXT MẶC ĐỊNH
+# I18N - KHÔNG EMOJI LITERAL
 # ============================================================
 DEFAULT_TEXTS = {
     "vi": {
@@ -229,13 +229,12 @@ DEFAULT_TEXTS = {
         "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
         "btn_lang_vi": "Tiếng Việt",
         "btn_lang_en": "English",
-        # Email flow
-        "youtube_email_ask": "Vui lòng gửi email YouTube của bạn cho bot để admin thêm vào team.\n\nVí dụ: yourname@gmail.com",
-        "youtube_email_received": "Đã nhận email: {email}\n\nAdmin sẽ thêm bạn vào team trong ít phút. Vui lòng đợi.",
+        "youtube_email_ask": "Vui lòng gửi email của bạn cho bot để admin thêm vào team.\n\nVí dụ: yourname@gmail.com",
+        "youtube_email_received": "Đã nhận email: {email}\n\nAdmin sẽ thêm bạn trong ít phút. Vui lòng đợi.",
         "youtube_email_pending": "Email: {email}\n\nĐang chờ admin thêm vào team. Vui lòng đợi.",
         "youtube_email_done": "Hoàn tất!\n\nEmail {email} đã được thêm vào team.\nVui lòng kiểm tra hộp thư để nhận lời mời.",
         "youtube_email_invalid": "Email không hợp lệ. Vui lòng gửi lại (ví dụ: yourname@gmail.com).",
-        "youtube_email_paid_msg": "Thanh toán thành công!\n\nVui lòng gửi email YouTube của bạn cho bot để admin thêm vào team.",
+        "youtube_email_paid_msg": "Thanh toán thành công!\n\nVui lòng gửi email của bạn cho bot để admin thêm vào team.",
         "admin_email_request_title": "Yêu cầu thêm vào team",
         "admin_email_confirm_btn": "Đã thêm vào team",
     },
@@ -301,12 +300,12 @@ DEFAULT_TEXTS = {
         "lang_required": "Please select a language to continue:",
         "btn_lang_vi": "Tiếng Việt",
         "btn_lang_en": "English",
-        "youtube_email_ask": "Please send your YouTube email to the bot so admin can add you to the team.\n\nExample: yourname@gmail.com",
+        "youtube_email_ask": "Please send your email to the bot so admin can add you to the team.\n\nExample: yourname@gmail.com",
         "youtube_email_received": "Email received: {email}\n\nAdmin will add you shortly. Please wait.",
         "youtube_email_pending": "Email: {email}\n\nWaiting for admin confirmation. Please wait.",
         "youtube_email_done": "Done!\n\nEmail {email} has been added to the team.\nCheck your inbox for invitation.",
         "youtube_email_invalid": "Invalid email. Please resend (e.g., yourname@gmail.com).",
-        "youtube_email_paid_msg": "Payment successful!\n\nPlease send your YouTube email to the bot so admin can add you to the team.",
+        "youtube_email_paid_msg": "Payment successful!\n\nPlease send your email to the bot so admin can add you to the team.",
         "admin_email_request_title": "Team request",
         "admin_email_confirm_btn": "Added to team",
     },
@@ -354,7 +353,7 @@ TEXT_EMOJI_KEYS = {
     "order_cancelled_ok": "Đã hủy",
     "detail_no_desc": "Không có mô tả",
     "payment_method_title": "Tiêu đề chọn phương thức TT",
-    "youtube_email_ask": "Yêu cầu gửi email YouTube",
+    "youtube_email_ask": "Yêu cầu gửi email",
     "youtube_email_received": "Đã nhận email",
     "youtube_email_pending": "Chờ admin xác nhận email",
     "youtube_email_done": "Hoàn tất email",
@@ -448,7 +447,7 @@ def format_key_display(key, lang="vi"):
 
 
 # ============================================================
-# UI EMOJI KEYS - chỉ định nghĩa key, emoji do admin set
+# UI EMOJI KEYS
 # ============================================================
 UI_KEYS = {
     "shop": "Tiêu đề shop",
@@ -478,7 +477,6 @@ UI_KEYS = {
 
 
 def ui_emoji_html(key, fallback=""):
-    """Trả về prefix HTML <tg-emoji> nếu có setting, ngược lại trả về fallback."""
     eid = get_setting(f"ui_{key}")
     if eid:
         return f'<tg-emoji emoji-id="{eid}">{fallback or "•"}</tg-emoji>'
@@ -969,6 +967,7 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if email_flow:
             update_order_status(order_code, "paid", None)
             set_order_email_status(order_code, "awaiting")
+            decrement_stock(order["product_id"])
             await safe_edit(query, t_html(uid, "youtube_email_paid_msg"))
         else:
             key = get_available_key(order["product_id"])
@@ -1097,36 +1096,70 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
-        # FIX: gộp khoảng trắng trước dấu | (thường gặp khi user dán emoji Premium)
-        clean = re.sub(r'\s+\|', '|', clean)
-        parts = clean.split(maxsplit=4)
+        # Gộp khoảng trắng trước dấu |
+        clean = re.sub(r'\s+\|', '|', clean).strip()
 
-        if len(parts) < 4:
+        # Bỏ tiền tố /add
+        if clean.lower().startswith("/add"):
+            body = clean[4:].strip()
+        else:
+            body = clean
+
+        if not body:
+            await safe_reply(update.message, "Thieu tham so.")
+            return
+
+        # --- Tách name|desc (nếu có) ---
+        if "|" in body:
+            name_part, rest = body.split("|", 1)
+            name = name_part.strip()
+            has_desc = True
+        else:
+            # Không có mô tả: token đầu là tên
+            tokens0 = body.split(maxsplit=1)
+            if len(tokens0) < 2:
+                await safe_reply(update.message, "Thieu gia hoac so luong.")
+                return
+            name = tokens0[0].strip()
+            rest = tokens0[1]
+            has_desc = False
+
+        if not name:
+            await safe_reply(update.message, "Thieu ten san pham.")
+            return
+
+        # --- Parse từ cuối lên ---
+        rest = rest.strip()
+        tokens = rest.split()
+
+        if not tokens:
             await safe_reply(update.message,
                 "<b>Cu phap:</b>\n"
                 "<code>/add &lt;ten&gt; &lt;gia&gt; &lt;so_luong&gt; [keys]</code>\n"
                 "<code>/add &lt;ten&gt;|&lt;mo ta&gt; &lt;gia&gt; &lt;so_luong&gt; [keys]</code>\n\n"
-                "<b>Vi du co mo ta:</b>\n"
+                "<b>Vi du:</b>\n"
                 "<code>/add YouTube|YouTube Team 30D 3000 5</code>\n"
-                "<code>/add YouTube|YouTube Team 30D 3000 5 K1,K2,K3,K4,K5</code>\n\n"
-                "<b>Luu y:</b>\n"
-                "- Dau <code>|</code> PHAI dinh lien ten (khong khoang trang truoc)\n"
-                "- Ten KHONG co dau cach (dung <code>_</code>)\n"
-                "- Gia va so luong la so nguyen\n"
-                "- Keys cach nhau bang dau <code>,</code>"
-            )
+                "<code>/add YouTube|YouTube Team 30D 3000 5 K1,K2,K3</code>")
             return
 
-        np = parts[1]
-        if "|" in np:
-            name, description = np.split("|", 1)
-            name, description = name.strip(), description.strip()
+        # Phần cuối có dấu phẩy → là keys
+        if "," in tokens[-1]:
+            keys_str = tokens[-1]
+            tokens = tokens[:-1]
         else:
-            name, description = np.strip(), ""
+            keys_str = "-"
 
-        price_str, stock_str = parts[2], parts[3]
-        keys_str = parts[4] if len(parts) >= 5 else "-"
+        if len(tokens) < 2:
+            await safe_reply(update.message,
+                "Thieu <gia> hoac <so_luong>. Vi du:\n"
+                "<code>/add YouTube|YouTube Team 30D 3000 5</code>")
+            return
 
+        stock_str = tokens[-1]
+        price_str = tokens[-2]
+        description = " ".join(tokens[:-2]).strip() if has_desc else ""
+
+        # --- Parse giá ---
         try:
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0:
@@ -1135,16 +1168,10 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
             return
 
-        keys_str = keys_str.strip()
-        is_num = False
-        try:
-            int(keys_str)
-            is_num = True
-        except ValueError:
-            pass
-        keys = [] if (keys_str in ("-", "") or is_num) else [
-            k.strip() for k in keys_str.split(",") if k.strip()
-        ]
+        # --- Parse số lượng / keys ---
+        keys = []
+        if keys_str.strip() and keys_str.strip() != "-":
+            keys = [k.strip() for k in keys_str.split(",") if k.strip()]
 
         if keys:
             stock = len(keys)
@@ -1154,10 +1181,11 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if stock < 0:
                     raise ValueError()
             except ValueError:
-                await safe_reply(update.message, "So luong loi.")
+                await safe_reply(update.message, f"So luong loi: <code>{html.escape(stock_str)}</code>")
                 return
-            stock = 0
+            # Giữ nguyên stock cho email flow
 
+        # --- Validate emoji ---
         emoji_note = ""
         if emoji_id:
             ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
@@ -1166,14 +1194,15 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 emoji_id = None
 
         pid = add_product(name, description, price, stock, keys, emoji_id=emoji_id)
+        desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
         await safe_reply(update.message,
             f"Da them SP ID <code>{pid}</code>\n"
-            f"Ten: {html.escape(name)}\n"
+            f"Ten: {html.escape(name)}{desc_info}\n"
             f"Gia: {price:,} VND\n"
-            f"So luong: {stock}\n"
+            f"Ton kho: {stock}\n"
             f"Keys: {len(keys)}{emoji_note}\n\n"
-            f"<i>De bat email flow: <code>/setflow {pid} email</code></i>"
-        )
+            f"<i>San pham chi co slot (khong key): bat email flow bang\n"
+            f"<code>/setflow {pid} email</code></i>")
     except Exception as e:
         logger.error(f"add: {e}", exc_info=True)
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -1187,8 +1216,7 @@ async def admin_setflow(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update.message,
             "<b>Cu phap:</b> <code>/setflow &lt;id&gt; &lt;email|key&gt;</code>\n\n"
             "- <code>email</code>: thu email, admin them thu cong\n"
-            "- <code>key</code>: tra key tu dong"
-        )
+            "- <code>key</code>: tra key tu dong")
         return
     try:
         pid = int(parts[1])
@@ -1464,6 +1492,7 @@ async def admin_confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE
         if email_flow:
             update_order_status(oc, "paid", None)
             set_order_email_status(oc, "awaiting")
+            decrement_stock(order["product_id"])
             await safe_reply(update.message, f"Da xac nhan don <code>{oc}</code> (email flow).")
             try:
                 await safe_send(context.bot, order["user_id"],
@@ -1656,7 +1685,7 @@ TEXT_KEYS_INFO = {
     "order_success": "Thong bao thanh cong",
     "binance_note": "Luu y Binance",
     "lang_required": "Yeu cau chon ngon ngu",
-    "youtube_email_ask": "Yeu cau gui email YouTube",
+    "youtube_email_ask": "Yeu cau gui email",
     "youtube_email_received": "Da nhan email",
     "youtube_email_pending": "Cho admin xac nhan email",
     "youtube_email_done": "Hoan tat email",
@@ -1899,6 +1928,7 @@ async def payos_webhook(request: Request):
                 if email_flow:
                     update_order_status(oc, "paid", None)
                     set_order_email_status(oc, "awaiting")
+                    decrement_stock(order["product_id"])
                     try:
                         await safe_send(app.bot, order["user_id"],
                                         t_html(order["user_id"], "youtube_email_paid_msg"))
