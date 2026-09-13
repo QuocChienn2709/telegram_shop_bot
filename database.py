@@ -14,9 +14,6 @@ _client = None
 _db = None
 _lock = threading.Lock()
 
-# ============================================================
-# CACHE
-# ============================================================
 _settings_cache = {"data": {}, "ts": 0}
 _texts_cache = {"data": {}, "ts": 0}
 _products_cache = {"data": [], "ts": 0}
@@ -63,6 +60,7 @@ def init_db():
         db.orders.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
         db.orders.create_index([("email_status", ASCENDING)])
         db.orders.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+        db.orders.create_index([("type", ASCENDING)])
         db.users.create_index([("user_id", ASCENDING)], unique=True)
         db.settings.create_index([("key", ASCENDING)], unique=True)
         db.texts.create_index([("key", ASCENDING)], unique=True)
@@ -216,6 +214,7 @@ def create_order(order_id, user_id, product_id, quantity, amount, payment_method
             "amount": int(amount),
             "status": "pending",
             "payment_method": payment_method,
+            "type": "product",
             "key_assigned": None,
             "customer_email": None,
             "email_status": None,
@@ -231,6 +230,7 @@ def create_order(order_id, user_id, product_id, quantity, amount, payment_method
             "registered_at": datetime.utcnow(),
             "lang": "vi",
             "lang_set": False,
+            "balance": 0,
         }},
         upsert=True
     )
@@ -269,6 +269,7 @@ def get_awaiting_email_order(user_id):
             "user_id": int(user_id),
             "email_status": {"$in": ["awaiting", "awaiting_user_confirm"]},
             "status": "paid",
+            "type": "product",
         },
         sort=[("created_at", DESCENDING)]
     )
@@ -277,16 +278,16 @@ def get_awaiting_email_order(user_id):
 
 def get_pending_orders_by_user(user_id):
     cur = _get_db().orders.find(
-        {"user_id": int(user_id), "status": "pending"}
+        {"user_id": int(user_id), "status": "pending", "type": "product"}
     ).sort("created_at", DESCENDING).limit(20)
     return [_normalize_order(d) for d in cur]
 
 
 def get_recent_orders_by_user(user_id, hours=24):
-    """Lấy cả đơn pending + đơn cancelled trong `hours` giờ gần đây."""
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     cur = _get_db().orders.find({
         "user_id": int(user_id),
+        "type": "product",
         "$or": [
             {"status": "pending"},
             {"status": "cancelled", "created_at": {"$gte": cutoff}},
@@ -296,7 +297,6 @@ def get_recent_orders_by_user(user_id, hours=24):
 
 
 def restore_cancelled_order(order_code, key_assigned=None):
-    """Khôi phục đơn đã hủy thành paid (khi phát hiện đã thanh toán)."""
     upd = {"$set": {
         "status": "paid",
         "paid_at": datetime.utcnow(),
@@ -306,14 +306,6 @@ def restore_cancelled_order(order_code, key_assigned=None):
     _get_db().orders.update_one({"order_code": int(order_code)}, upd)
 
 
-def get_orders_by_user_and_ids(user_id, order_ids):
-    cur = _get_db().orders.find({
-        "user_id": int(user_id),
-        "order_code": {"$in": [int(i) for i in order_ids]}
-    })
-    return {o["order_code"]: _normalize_order(o) for o in cur}
-
-
 def _normalize_order(doc):
     if not doc:
         return None
@@ -321,6 +313,7 @@ def _normalize_order(doc):
     d["id"] = d.get("order_code") or d.get("_id")
     d.setdefault("customer_email", None)
     d.setdefault("email_status", None)
+    d.setdefault("type", "product")
     return d
 
 
@@ -341,6 +334,7 @@ def register_user(user_id, username=None, first_name=None, last_name=None):
                 "registered_at": datetime.utcnow(),
                 "lang": "vi",
                 "lang_set": False,
+                "balance": 0,
             },
         },
         upsert=True
@@ -360,6 +354,7 @@ def set_user_lang(user_id, lang):
             "$setOnInsert": {
                 "user_id": int(user_id),
                 "registered_at": datetime.utcnow(),
+                "balance": 0,
             },
         },
         upsert=True
@@ -377,6 +372,65 @@ def get_all_user_ids():
 
 def count_users():
     return _get_db().users.count_documents({})
+
+
+# ============================================================
+# WALLET
+# ============================================================
+def get_user_balance(user_id):
+    doc = _get_db().users.find_one({"user_id": int(user_id)}, {"balance": 1})
+    return int(doc.get("balance", 0)) if doc else 0
+
+
+def add_balance(user_id, amount):
+    _get_db().users.update_one(
+        {"user_id": int(user_id)},
+        {"$inc": {"balance": int(amount)}},
+        upsert=True
+    )
+
+
+def subtract_balance(user_id, amount):
+    result = _get_db().users.update_one(
+        {"user_id": int(user_id), "balance": {"$gte": int(amount)}},
+        {"$inc": {"balance": -int(amount)}}
+    )
+    return result.modified_count > 0
+
+
+# ============================================================
+# TOPUP ORDERS
+# ============================================================
+def create_topup_order(order_code, user_id, amount, payment_method="payos"):
+    db = _get_db()
+    try:
+        db.orders.insert_one({
+            "_id": int(order_code),
+            "order_code": int(order_code),
+            "user_id": int(user_id),
+            "product_id": 0,
+            "quantity": 1,
+            "amount": int(amount),
+            "status": "pending",
+            "payment_method": payment_method,
+            "type": "topup",
+            "created_at": datetime.utcnow(),
+            "paid_at": None,
+        })
+    except DuplicateKeyError:
+        pass
+
+
+def mark_topup_paid(order_code):
+    doc = _get_db().orders.find_one_and_update(
+        {"order_code": int(order_code), "type": "topup", "status": "pending"},
+        {"$set": {"status": "paid", "paid_at": datetime.utcnow()}},
+        return_document=False
+    )
+    if not doc:
+        return False
+    add_balance(doc["user_id"], doc["amount"])
+    return True
 
 
 # ============================================================
