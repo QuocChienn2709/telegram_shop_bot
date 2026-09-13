@@ -30,8 +30,8 @@ from database import (
     list_all_products, count_all_products,
     get_available_key, create_order, get_order, update_order_status,
     set_order_email, set_order_email_status, get_awaiting_email_order,
-    get_pending_orders_by_user, get_orders_by_user_and_ids,
-    get_db, register_user,
+    get_pending_orders_by_user, get_recent_orders_by_user, restore_cancelled_order,
+    get_orders_by_user_and_ids, get_db, register_user,
     get_user_lang, set_user_lang, is_lang_set,
     get_all_user_ids, count_users,
     get_setting, set_setting, delete_setting, get_all_settings,
@@ -183,6 +183,7 @@ DEFAULT_TEXTS = {
         "btn_back_shop": "Quay lại menu",
         "btn_pay_again": "Thanh toán",
         "btn_delete_order": "Xóa đơn",
+        "btn_recheck_order": "Kiểm tra lại",
         "btn_refresh": "Load lại",
         "btn_lang": "Ngôn ngữ",
         "btn_lang_short": "Đổi ngôn ngữ",
@@ -211,6 +212,9 @@ DEFAULT_TEXTS = {
         "order_no_key": "Đã thanh toán nhưng hết key. Liên hệ admin.",
         "order_cannot_cancel": "Không thể hủy đơn hàng này.",
         "order_cancelled_ok": "Đã hủy đơn hàng",
+        "order_cancelled_check_hint": "Nếu bạn đã chuyển khoản, vào Đơn hàng chờ để kiểm tra lại.",
+        "order_recheck_paid": "Đã phát hiện thanh toán!",
+        "order_recheck_notpaid": "Chưa phát hiện thanh toán cho đơn này.",
         "pending_title": "Đơn hàng chờ thanh toán",
         "pending_empty": "Bạn không có đơn hàng nào đang chờ.",
         "pending_hint": "Nhấn 'Thanh toán' để tiếp tục hoặc 'Xóa đơn' để hủy.",
@@ -266,6 +270,7 @@ DEFAULT_TEXTS = {
         "btn_back_shop": "Back to menu",
         "btn_pay_again": "Pay",
         "btn_delete_order": "Delete",
+        "btn_recheck_order": "Recheck",
         "btn_refresh": "Refresh",
         "btn_lang": "Language",
         "btn_lang_short": "Change language",
@@ -294,6 +299,9 @@ DEFAULT_TEXTS = {
         "order_no_key": "Paid but out of keys. Contact admin.",
         "order_cannot_cancel": "Cannot cancel this order.",
         "order_cancelled_ok": "Order cancelled",
+        "order_cancelled_check_hint": "If you already paid, go to Pending orders to recheck.",
+        "order_recheck_paid": "Payment detected!",
+        "order_recheck_notpaid": "No payment detected for this order.",
         "pending_title": "Pending orders",
         "pending_empty": "You have no pending orders.",
         "pending_hint": "Tap 'Pay' to continue or 'Delete' to cancel.",
@@ -500,6 +508,7 @@ UI_KEYS = {
     "send": "Biểu tượng gửi",
     "confirm": "Biểu tượng xác nhận",
     "delete": "Biểu tượng xóa",
+    "recheck": "Biểu tượng kiểm tra lại",
 }
 
 
@@ -570,13 +579,13 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
 
 
 # ============================================================
-# BUTTON BUILDERS (FIX: bấm sản phẩm → xem chi tiết trước)
+# BUTTON BUILDERS
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
     kb = []
     for p in products:
         text = f"{p['name']} - {p['price']:,}đ - còn {p['stock']}"
-        kw = {"text": text, "callback_data": f"detail_{p['id']}"}  # ← đổi thành detail_
+        kw = {"text": text, "callback_data": f"detail_{p['id']}"}
         if p.get("emoji_id"):
             kw["icon_custom_emoji_id"] = p["emoji_id"]
         kb.append([InlineKeyboardButton(**kw)])
@@ -811,7 +820,6 @@ async def list_products_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def show_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bấm sản phẩm → hiện chi tiết có mô tả → có nút Mua ngay."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1101,6 +1109,7 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Check PayOS trước — nếu đã TT → cấp hàng, chưa TT mới hủy."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1112,18 +1121,60 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not order or order["status"] != "pending":
         await safe_edit(query, t_html(uid, "order_cannot_cancel"))
         return
+
+    product = get_product(order["product_id"])
+    email_flow = bool(product and product.get("requires_email"))
+
+    # Check PayOS trước khi hủy
+    data = get_payment_status(order_code)
+    paid = bool(
+        data and data.get("code") == "00"
+        and data.get("data", {}).get("status") == "PAID"
+    )
+
+    if paid:
+        # Đã thanh toán rồi → cấp hàng luôn, KHÔNG hủy
+        if email_flow:
+            update_order_status(order_code, "paid", None)
+            set_order_email_status(order_code, "awaiting")
+            decrement_stock(order["product_id"])
+            await safe_edit(query, t_html(uid, "youtube_email_paid_msg"))
+        else:
+            key = get_available_key(order["product_id"])
+            if key:
+                update_order_status(order_code, "paid", key)
+                await safe_edit(
+                    query,
+                    f"{t_html(uid, 'order_success')}\n\n"
+                    f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
+                    f"{format_key_display(key, get_user_lang(uid))}"
+                )
+            else:
+                await safe_edit(query, t_html(uid, "order_no_key"), reply_markup=None)
+        return
+
+    # Chưa thanh toán → hủy
     update_order_status(order_code, "cancelled")
-    await safe_edit(query, f"{t_html(uid, 'order_cancelled_ok')} #{order_code}.")
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_orders"), callback_data="my_orders", ui_key="orders")],
+        [button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")],
+    ])
+    await safe_edit(
+        query,
+        f"{t_html(uid, 'order_cancelled_ok')} #{order_code}.\n\n"
+        f"<i>{html.escape(t(uid, 'order_cancelled_check_hint'))}</i>",
+        reply_markup=kb
+    )
 
 
 # ============================================================
-# ĐƠN HÀNG CHỜ - BATCH LOAD + nút thanh toán/xóa
+# ĐƠN HÀNG CHỜ - hiện cả đơn hủy (24h) + nút Kiểm tra lại
 # ============================================================
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
-    orders = get_pending_orders_by_user(uid)
+    orders = get_recent_orders_by_user(uid, hours=24)
 
     order_icon = ui_emoji_html("order")
 
@@ -1134,11 +1185,10 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_edit(query, t_html(uid, "pending_empty"), reply_markup=kb)
         return
 
-    # Batch load products cho các đơn
-    product_ids = list({o["product_id"] for o in orders[:10]})
+    # Batch load products
+    product_ids = list({o["product_id"] for o in orders})
     products_map = {}
-    db = get_db()
-    for doc in db.products.find(
+    for doc in get_db().products.find(
         {"id": {"$in": product_ids}},
         {"id": 1, "name": 1, "emoji_id": 1}
     ):
@@ -1147,25 +1197,26 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = f"{order_icon} <b>{html.escape(t(uid, 'pending_title'))}:</b>\n\n"
     kb_rows = []
 
-    for i, o in enumerate(orders[:10], 1):
+    for i, o in enumerate(orders, 1):
         p = products_map.get(o["product_id"])
-        if p:
-            name = product_name_html(p["name"], p.get("emoji_id"))
-        else:
-            name = "?"
+        name = product_name_html(p["name"], p.get("emoji_id")) if p else "?"
         short_code = str(o["id"])[-6:]
-        text += f"{i}. <code>#{o['id']}</code> - {name} - {o['amount']:,} VND\n"
+        status_icon = "" if o["status"] == "pending" else " [Đã hủy]"
 
-        pay_label = f"{t(uid, 'btn_pay_again')} #{short_code}"
-        del_label = f"{t(uid, 'btn_delete_order')} #{short_code}"
+        text += f"{i}. <code>#{o['id']}</code> - {name} - {o['amount']:,} VND{status_icon}\n"
 
-        kb_rows.append([
-            InlineKeyboardButton(pay_label, callback_data=f"backpay_{o['id']}"),
-            InlineKeyboardButton(del_label, callback_data=f"del_order_{o['id']}"),
-        ])
-
-    if len(orders) > 10:
-        text += f"\n<i>... và {len(orders) - 10} đơn khác</i>\n"
+        if o["status"] == "pending":
+            pay_label = f"{t(uid, 'btn_pay_again')} #{short_code}"
+            del_label = f"{t(uid, 'btn_delete_order')} #{short_code}"
+            kb_rows.append([
+                InlineKeyboardButton(pay_label, callback_data=f"backpay_{o['id']}"),
+                InlineKeyboardButton(del_label, callback_data=f"del_order_{o['id']}"),
+            ])
+        else:
+            recheck_label = f"{t(uid, 'btn_recheck_order')} #{short_code}"
+            kb_rows.append([
+                InlineKeyboardButton(recheck_label, callback_data=f"recheck_{o['id']}"),
+            ])
 
     text += f"\n<i>{html.escape(t(uid, 'pending_hint'))}</i>"
 
@@ -1193,9 +1244,100 @@ async def delete_pending_order_callback(update: Update, context: ContextTypes.DE
         await query.answer("Don da xu ly roi", show_alert=True)
         return
 
+    # Check PayOS trước khi xóa (giống cancel_order)
+    data = get_payment_status(oc)
+    paid = bool(
+        data and data.get("code") == "00"
+        and data.get("data", {}).get("status") == "PAID"
+    )
+
+    if paid:
+        # Đã thanh toán → cấp hàng luôn
+        product = get_product(order["product_id"])
+        email_flow = bool(product and product.get("requires_email"))
+        if email_flow:
+            update_order_status(oc, "paid", None)
+            set_order_email_status(oc, "awaiting")
+            decrement_stock(order["product_id"])
+            await query.answer(t(uid if False else uid, "order_recheck_paid"), show_alert=True)
+            await safe_edit(query, t_html(uid, "youtube_email_paid_msg"))
+        else:
+            key = get_available_key(order["product_id"])
+            if key:
+                update_order_status(oc, "paid", key)
+                await query.answer(t(uid, "order_recheck_paid"), show_alert=True)
+                await safe_edit(
+                    query,
+                    f"{t_html(uid, 'order_success')}\n\n"
+                    f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
+                    f"{format_key_display(key, get_user_lang(uid))}"
+                )
+            else:
+                await query.answer(t(uid, "order_no_key"), show_alert=True)
+        return
+
+    # Chưa TT → hủy
     update_order_status(oc, "cancelled")
     await query.answer(t(uid, "order_cancelled_ok"), show_alert=False)
     await my_orders(update, context)
+
+
+async def recheck_cancelled_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User bấm 'Kiểm tra lại' cho đơn đã hủy — nếu PayOS đã TT → khôi phục."""
+    query = update.callback_query
+    uid = query.from_user.id
+    try:
+        order_code = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        await query.answer("Loi du lieu", show_alert=True)
+        return
+
+    order = get_order(order_code)
+    if not order or order["user_id"] != uid:
+        await query.answer("Khong tim thay don", show_alert=True)
+        return
+
+    if order["status"] == "paid":
+        await query.answer("Don da thanh toan", show_alert=True)
+        await my_orders(update, context)
+        return
+
+    # Gọi PayOS check
+    data = get_payment_status(order_code)
+    paid = bool(
+        data and data.get("code") == "00"
+        and data.get("data", {}).get("status") == "PAID"
+    )
+
+    if not paid:
+        await query.answer(t(uid, "order_recheck_notpaid"), show_alert=True)
+        return
+
+    # Đã thanh toán → khôi phục
+    product = get_product(order["product_id"])
+    email_flow = bool(product and product.get("requires_email"))
+
+    if email_flow:
+        restore_cancelled_order(order_code)
+        set_order_email_status(order_code, "awaiting")
+        decrement_stock(order["product_id"])
+        await query.answer(t(uid, "order_recheck_paid"), show_alert=True)
+        await safe_edit(query, t_html(uid, "youtube_email_paid_msg"))
+    else:
+        key = get_available_key(order["product_id"])
+        if not key:
+            await query.answer(t(uid, "order_no_key"), show_alert=True)
+            return
+        restore_cancelled_order(order_code, key_assigned=key)
+        await query.answer(t(uid, "order_recheck_paid"), show_alert=True)
+        await safe_edit(
+            query,
+            f"{t_html(uid, 'order_success')}\n\n"
+            f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
+            f"{format_key_display(key, get_user_lang(uid))}"
+        )
+
+    logger.info(f"Restored cancelled order {order_code} for user {uid} (was paid)")
 
 
 # ============================================================
@@ -2163,6 +2305,32 @@ async def payos_webhook(request: Request):
                                 f"{format_key_display(key, lang)}")
                         except Exception as e:
                             logger.error(f"notify: {e}")
+            # Nếu order đã cancelled nhưng webhook đến muộn → khôi phục
+            elif order and order["status"] == "cancelled" and pc == "00":
+                logger.info(f"Late webhook for cancelled order {oc} — auto restoring")
+                product = get_product(order["product_id"])
+                email_flow = bool(product and product.get("requires_email"))
+                if email_flow:
+                    restore_cancelled_order(oc)
+                    set_order_email_status(oc, "awaiting")
+                    decrement_stock(order["product_id"])
+                    try:
+                        await safe_send(request.app["bot_app"].bot, order["user_id"],
+                                        t_html(order["user_id"], "youtube_email_paid_msg"))
+                    except Exception as e:
+                        logger.error(f"notify: {e}")
+                else:
+                    key = get_available_key(order["product_id"])
+                    if key:
+                        restore_cancelled_order(oc, key_assigned=key)
+                        lang = get_user_lang(order["user_id"])
+                        try:
+                            await safe_send(request.app["bot_app"].bot, order["user_id"],
+                                f"{t_html(order['user_id'], 'order_success')}\n\n"
+                                f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
+                                f"{format_key_display(key, lang)}")
+                        except Exception as e:
+                            logger.error(f"notify: {e}")
         return Response(text="OK", status=200)
     except Exception as e:
         logger.error(f"payos webhook: {e}", exc_info=True)
@@ -2230,6 +2398,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
     app.add_handler(CallbackQueryHandler(delete_pending_order_callback, pattern=r"^del_order_\d+$"))
+    app.add_handler(CallbackQueryHandler(recheck_cancelled_order_callback, pattern=r"^recheck_\d+$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
     app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
