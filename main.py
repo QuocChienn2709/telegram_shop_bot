@@ -1466,7 +1466,6 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """FIX: lưu state DB + gửi message mới."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1482,40 +1481,6 @@ async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>{html.escape(t(uid, 'wallet_topup_prompt'))}</b>\n\n<i>Vi du: 50000</i>",
         reply_markup=kb
     )
-
-
-async def handle_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """FIX: check state từ RAM HOẶC DB."""
-    uid = update.effective_user.id
-    state_ram = context.user_data.get("topup_state")
-    state_db = get_topup_state(uid)
-    if not (state_ram or state_db):
-        return False
-    context.user_data["topup_state"] = False
-    set_topup_state(uid, False)
-    text = (update.message.text or "").strip().replace(".", "").replace(",", "")
-    if not text.isdigit():
-        await safe_reply(update.message, t_html(uid, "wallet_topup_invalid"))
-        return True
-    amount = int(text)
-    if amount < 2000:
-        await safe_reply(update.message, t_html(uid, "wallet_topup_invalid"))
-        return True
-
-    order_code = int(f"{int(datetime.now().timestamp())}{uid % 100000:05d}")
-    create_topup_order(order_code, uid, amount)
-
-    kb = InlineKeyboardMarkup([
-        [button(t(uid, "btn_topup_payos"), callback_data=f"topup_payos_{order_code}", ui_key="pay_payos")],
-        [button(t(uid, "btn_topup_binance"), callback_data=f"topup_binance_{order_code}", ui_key="pay_binance")],
-        [button(t(uid, "btn_cancel"), callback_data="wallet", ui_key="cancel")],
-    ])
-    await safe_reply(
-        update.message,
-        t_html(uid, "wallet_topup_created", code=order_code, amount=amount),
-        reply_markup=kb
-    )
-    return True
 
 
 async def topup_payos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1679,33 +1644,66 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ============================================================
-# TEXT HANDLER (FIX: bỏ filter User(ADMIN_IDS))
+# TEXT HANDLER (FIX: filters.ALL)
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    # Skip admin (họ không nạp ví / gửi email qua bot)
-    if user.id in Config.ADMIN_IDS:
-        return
+    try:
+        user = update.effective_user
+        if not user:
+            return
+        if user.id in Config.ADMIN_IDS:
+            return
+        if not update.message or not update.message.text:
+            return
 
-    text_in = (update.message.text or "").strip()
-    logger.info(f"handle_user_text: uid={user.id} text='{text_in[:30]}' topup_state={context.user_data.get('topup_state')}")
+        text_in = update.message.text.strip()
+        state_ram = context.user_data.get("topup_state", False)
+        state_db = get_topup_state(user.id)
+        logger.info(f"handle_user_text: uid={user.id} text='{text_in[:30]}' ram={state_ram} db={state_db}")
 
-    # 1. Topup
-    if await handle_topup_amount(update, context):
-        return
+        # 1. Topup flow
+        if state_ram or state_db:
+            context.user_data["topup_state"] = False
+            set_topup_state(user.id, False)
 
-    # 2. Email
-    if not EMAIL_RE.match(text_in):
-        return
-    order = get_awaiting_email_order(user.id)
-    if not order:
-        return
-    set_order_email(order["order_code"], text_in)
-    await safe_reply(
-        update.message,
-        t_html(user.id, "youtube_email_preview", email=html.escape(text_in)),
-        reply_markup=email_confirm_buttons(order["order_code"], uid=user.id)
-    )
+            clean_text = text_in.replace(".", "").replace(",", "")
+            if not clean_text.isdigit():
+                await safe_reply(update.message, t_html(user.id, "wallet_topup_invalid"))
+                return
+            amount = int(clean_text)
+            if amount < 2000:
+                await safe_reply(update.message, t_html(user.id, "wallet_topup_invalid"))
+                return
+
+            order_code = int(f"{int(datetime.now().timestamp())}{user.id % 100000:05d}")
+            create_topup_order(order_code, user.id, amount)
+
+            kb = InlineKeyboardMarkup([
+                [button(t(user.id, "btn_topup_payos"), callback_data=f"topup_payos_{order_code}", ui_key="pay_payos")],
+                [button(t(user.id, "btn_topup_binance"), callback_data=f"topup_binance_{order_code}", ui_key="pay_binance")],
+                [button(t(user.id, "btn_cancel"), callback_data="wallet", ui_key="cancel")],
+            ])
+            await safe_reply(
+                update.message,
+                t_html(user.id, "wallet_topup_created", code=order_code, amount=amount),
+                reply_markup=kb
+            )
+            return
+
+        # 2. Email flow
+        if not EMAIL_RE.match(text_in):
+            return
+        order = get_awaiting_email_order(user.id)
+        if not order:
+            return
+        set_order_email(order["order_code"], text_in)
+        await safe_reply(
+            update.message,
+            t_html(user.id, "youtube_email_preview", email=html.escape(text_in)),
+            reply_markup=email_confirm_buttons(order["order_code"], uid=user.id)
+        )
+    except Exception as e:
+        logger.error(f"handle_user_text error: {e}", exc_info=True)
 
 
 async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1782,7 +1780,7 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # ============================================================
-# ADMIN HANDLERS (giữ nguyên)
+# ADMIN HANDLERS
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -1962,7 +1960,6 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
-        _invalidate = None
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -2644,14 +2641,15 @@ async def main():
     app.add_handler(CommandHandler("deltext", admin_deltext))
     app.add_handler(CommandHandler("help", admin_help))
 
+    # Import file .txt (chỉ admin)
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products
     ))
 
-    # FIX: bỏ & ~filters.User(Config.ADMIN_IDS) — hàm tự skip admin bên trong
+    # FIX: filters.ALL — handler tự kiểm tra bên trong
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
+        filters.ALL,
         handle_user_text
     ))
 
