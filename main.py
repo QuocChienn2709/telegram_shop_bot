@@ -129,7 +129,7 @@ def _fetch_fallback_rate():
         data = r.json()
         vnd = data.get("rates", {}).get("VND")
         if not vnd:
-            return None, "er-api không có VND"
+            return None, "er-api khong co VND"
         return round(float(vnd) * 1.01, 2), ""
     except Exception as e:
         return None, f"er-api: {e}"
@@ -157,10 +157,10 @@ def get_binance_rate_live():
         return fb, "er-api (fallback)", err1
     _binance_rate_cache = {
         "rate": manual, "ts": now,
-        "source": "Manual (API lỗi)",
+        "source": "Manual (API loi)",
         "error": f"{err1} | {err2}",
     }
-    return manual, "Manual (API lỗi)", f"{err1} | {err2}"
+    return manual, "Manual (API loi)", f"{err1} | {err2}"
 
 
 # ============================================================
@@ -229,14 +229,20 @@ DEFAULT_TEXTS = {
         "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
         "btn_lang_vi": "Tiếng Việt",
         "btn_lang_en": "English",
+        # Email flow
         "youtube_email_ask": "Vui lòng gửi email của bạn cho bot để admin thêm vào team.\n\nVí dụ: yourname@gmail.com",
-        "youtube_email_received": "Đã nhận email: {email}\n\nAdmin sẽ thêm bạn trong ít phút. Vui lòng đợi.",
-        "youtube_email_pending": "Email: {email}\n\nĐang chờ admin thêm vào team. Vui lòng đợi.",
-        "youtube_email_done": "Hoàn tất!\n\nEmail {email} đã được thêm vào team.\nVui lòng kiểm tra hộp thư để nhận lời mời.",
-        "youtube_email_invalid": "Email không hợp lệ. Vui lòng gửi lại (ví dụ: yourname@gmail.com).",
+        "youtube_email_preview": "Email của bạn: <code>{email}</code>\n\nNhấn nút bên dưới để <b>xác nhận gửi email này cho admin</b>.",
+        "youtube_email_btn_confirm_send": "Xác nhận gửi cho admin",
+        "youtube_email_btn_cancel": "Hủy",
+        "youtube_email_sent_admin": "Đã gửi email <code>{email}</code> cho admin.\n\nVui lòng chờ admin thêm bạn vào team.",
+        "youtube_email_cancelled": "Đã hủy gửi email. Bạn có thể gửi lại email khác.",
+        "youtube_email_pending": "Email: <code>{email}</code>\n\nĐang chờ admin thêm vào team. Vui lòng đợi.",
+        "youtube_email_done": "Hoàn tất!\n\nEmail <code>{email}</code> đã được thêm vào team.\nVui lòng kiểm tra hộp thư để nhận lời mời.",
         "youtube_email_paid_msg": "Thanh toán thành công!\n\nVui lòng gửi email của bạn cho bot để admin thêm vào team.",
+        # Admin email
         "admin_email_request_title": "Yêu cầu thêm vào team",
         "admin_email_confirm_btn": "Đã thêm vào team",
+        "admin_email_confirmed": "[ĐÃ XÁC NHẬN]",
     },
     "en": {
         "shop_empty": "No products available yet.",
@@ -301,13 +307,17 @@ DEFAULT_TEXTS = {
         "btn_lang_vi": "Tiếng Việt",
         "btn_lang_en": "English",
         "youtube_email_ask": "Please send your email to the bot so admin can add you to the team.\n\nExample: yourname@gmail.com",
-        "youtube_email_received": "Email received: {email}\n\nAdmin will add you shortly. Please wait.",
-        "youtube_email_pending": "Email: {email}\n\nWaiting for admin confirmation. Please wait.",
-        "youtube_email_done": "Done!\n\nEmail {email} has been added to the team.\nCheck your inbox for invitation.",
-        "youtube_email_invalid": "Invalid email. Please resend (e.g., yourname@gmail.com).",
+        "youtube_email_preview": "Your email: <code>{email}</code>\n\nPress the button below to <b>confirm sending this email to admin</b>.",
+        "youtube_email_btn_confirm_send": "Confirm send to admin",
+        "youtube_email_btn_cancel": "Cancel",
+        "youtube_email_sent_admin": "Email <code>{email}</code> has been sent to admin.\n\nPlease wait for admin to add you to the team.",
+        "youtube_email_cancelled": "Email sending cancelled. You can send another email.",
+        "youtube_email_pending": "Email: <code>{email}</code>\n\nWaiting for admin confirmation. Please wait.",
+        "youtube_email_done": "Done!\n\nEmail <code>{email}</code> has been added to the team.\nCheck your inbox for invitation.",
         "youtube_email_paid_msg": "Payment successful!\n\nPlease send your email to the bot so admin can add you to the team.",
         "admin_email_request_title": "Team request",
         "admin_email_confirm_btn": "Added to team",
+        "admin_email_confirmed": "[CONFIRMED]",
     },
 }
 
@@ -354,7 +364,7 @@ TEXT_EMOJI_KEYS = {
     "detail_no_desc": "Không có mô tả",
     "payment_method_title": "Tiêu đề chọn phương thức TT",
     "youtube_email_ask": "Yêu cầu gửi email",
-    "youtube_email_received": "Đã nhận email",
+    "youtube_email_preview": "Xem trước email",
     "youtube_email_pending": "Chờ admin xác nhận email",
     "youtube_email_done": "Hoàn tất email",
     "youtube_email_paid_msg": "Thông báo thanh toán email flow",
@@ -473,6 +483,8 @@ UI_KEYS = {
     "account": "Biểu tượng tài khoản",
     "key_icon": "Biểu tượng key",
     "email": "Biểu tượng email",
+    "send": "Biểu tượng gửi",
+    "confirm": "Biểu tượng xác nhận",
 }
 
 
@@ -537,7 +549,7 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
         )
         await m.delete()
         if not has_entity:
-            logger.warning(f"Emoji {emoji_id} bị Telegram strip")
+            logger.warning(f"Emoji {emoji_id} bi Telegram strip")
         return has_entity
     except Exception as e:
         logger.info(f"emoji validate fail: {e}")
@@ -597,10 +609,21 @@ def lang_buttons(uid=None):
     ])
 
 
+def email_confirm_buttons(order_code, uid=None):
+    """Nút xác nhận user gửi email cho admin."""
+    return InlineKeyboardMarkup([
+        [button(t(uid, "youtube_email_btn_confirm_send"),
+                callback_data=f"cfmsend_{order_code}", ui_key="send")],
+        [button(t(uid, "youtube_email_btn_cancel"),
+                callback_data=f"cfmcancel_{order_code}", ui_key="cancel")],
+    ])
+
+
 # ============================================================
-# EMAIL FLOW HELPER
+# EMAIL FLOW HELPERS
 # ============================================================
 async def _notify_admin_email_request(bot, order, email, tg_user):
+    """Gửi cho admin thông báo kèm nút xác nhận."""
     product = get_product(order["product_id"])
     prod_name = html.escape(product["name"]) if product else "?"
     if tg_user.username:
@@ -937,6 +960,14 @@ async def check_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if es == "awaiting":
                 await safe_edit(query, t_html(uid, "youtube_email_ask"))
                 return
+            if es == "awaiting_user_confirm":
+                email = order.get("customer_email") or ""
+                await safe_edit(
+                    query,
+                    t_html(uid, "youtube_email_preview", email=html.escape(email)),
+                    reply_markup=email_confirm_buttons(order_code, uid=uid)
+                )
+                return
             if es == "pending_admin":
                 await safe_edit(query, t_html(
                     uid, "youtube_email_pending",
@@ -1023,7 +1054,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# TEXT HANDLER (email capture)
+# TEXT HANDLER (email capture) - Bước 1: lưu tạm
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1035,16 +1066,73 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order = get_awaiting_email_order(user.id)
     if not order:
         return
+    # Lưu email tạm, status = awaiting_user_confirm
     set_order_email(order["order_code"], text)
+    # Hiện preview + nút xác nhận cho user
     await safe_reply(
         update.message,
-        t_html(user.id, "youtube_email_received", email=html.escape(text))
+        t_html(user.id, "youtube_email_preview", email=html.escape(text)),
+        reply_markup=email_confirm_buttons(order["order_code"], uid=user.id)
     )
-    await _notify_admin_email_request(context.bot, order, text, user)
 
 
 # ============================================================
-# ADMIN CALLBACK - CONFIRM EMAIL
+# USER CONFIRM SEND EMAIL - Bước 2
+# ============================================================
+async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    try:
+        order_code = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        return
+    order = get_order(order_code)
+    if not order:
+        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        return
+    if order.get("email_status") != "awaiting_user_confirm":
+        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        return
+
+    email = order.get("customer_email") or ""
+    # Cập nhật trạng thái → pending_admin
+    set_order_email_status(order_code, "pending_admin")
+
+    # Đổi tin nhắn user → thông báo đã gửi
+    await safe_edit(
+        query,
+        t_html(uid, "youtube_email_sent_admin", email=html.escape(email)),
+        reply_markup=None
+    )
+
+    # Gửi admin (kèm nút xác nhận)
+    await _notify_admin_email_request(context.bot, order, email, uid_user=uid)
+
+
+async def cancel_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    try:
+        order_code = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        return
+    order = get_order(order_code)
+    if not order:
+        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        return
+    if order.get("email_status") != "awaiting_user_confirm":
+        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        return
+
+    # Reset về awaiting (không xóa email, user có thể gửi lại)
+    set_order_email_status(order_code, "awaiting")
+    await safe_edit(query, t_html(uid, "youtube_email_cancelled"), reply_markup=None)
+
+
+# ============================================================
+# ADMIN CONFIRM - Bước 3
 # ============================================================
 async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1068,14 +1156,16 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
     set_order_email_status(oc, "confirmed")
     await query.answer("Da xac nhan")
 
+    # Đánh dấu tin nhắn admin
     try:
         await query.edit_message_text(
-            (query.message.text or "") + "\n\n[DA XAC NHAN]",
+            (query.message.text or "") + f"\n\n{t(0, 'admin_email_confirmed')}",
             parse_mode=ParseMode.HTML
         )
     except Exception:
         pass
 
+    # Thông báo user hoàn thành
     user_uid = order["user_id"]
     email = order.get("customer_email") or ""
     try:
@@ -1133,8 +1223,7 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "<code>/add &lt;ten&gt; &lt;gia&gt; &lt;so_luong&gt; [keys]</code>\n"
                 "<code>/add &lt;ten&gt;|&lt;mo ta&gt; &lt;gia&gt; &lt;so_luong&gt; [keys]</code>\n\n"
                 "<b>Vi du:</b>\n"
-                "<code>/add YouTube|YouTube Team 30D 3000 5</code>\n"
-                "<code>/add YouTube|YouTube Team 30D 3000 5 K1,K2,K3</code>")
+                "<code>/add YouTube|YouTube Team 30D 3000 5</code>")
             return
 
         if "," in tokens[-1]:
@@ -1176,7 +1265,6 @@ async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await safe_reply(update.message, f"So luong loi: <code>{html.escape(stock_str)}</code>")
                 return
 
-        # Validate emoji nhưng LUÔN LƯU emoji_id (không xóa nếu fail)
         emoji_note = ""
         if emoji_id:
             ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
@@ -1311,7 +1399,6 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_set_product_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """LUÔN LƯU emoji vào DB, chỉ cảnh báo nếu validate fail."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     try:
@@ -1535,7 +1622,7 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# ADMIN - SETUI (UI + Text) - LUÔN LƯU
+# ADMIN - SETUI
 # ============================================================
 def _resolve_setui_key(key):
     if key in UI_KEYS:
@@ -1684,7 +1771,7 @@ TEXT_KEYS_INFO = {
     "binance_note": "Luu y Binance",
     "lang_required": "Yeu cau chon ngon ngu",
     "youtube_email_ask": "Yeu cau gui email",
-    "youtube_email_received": "Da nhan email",
+    "youtube_email_preview": "Xem truoc email",
     "youtube_email_pending": "Cho admin xac nhan email",
     "youtube_email_done": "Hoan tat email",
 }
@@ -2002,6 +2089,8 @@ async def main():
     ))
 
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
+    app.add_handler(CallbackQueryHandler(confirm_send_email_callback, pattern=r"^cfmsend_\d+$"))
+    app.add_handler(CallbackQueryHandler(cancel_send_email_callback, pattern=r"^cfmcancel_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_email_callback, pattern=r"^cfemail_\d+$"))
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
