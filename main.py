@@ -261,8 +261,8 @@ DEFAULT_TEXTS = {
         "admin_email_confirmed": "[ĐÃ XÁC NHẬN]",
         "wallet_title": "Ví của bạn",
         "wallet_balance": "Số dư",
-        "wallet_topup_prompt": "Nhập số tiền muốn nạp (VND). Tối thiểu 10,000.",
-        "wallet_topup_invalid": "Số tiền không hợp lệ. Tối thiểu 10,000 VND.",
+        "wallet_topup_prompt": "Nhập số tiền muốn nạp (VND). Tối thiểu 2,000.",
+        "wallet_topup_invalid": "Số tiền không hợp lệ. Tối thiểu 2,000 VND.",
         "wallet_topup_created": "Đơn nạp ví <b>#{code}</b> đã tạo.\n\nSố tiền: <b>{amount:,} VND</b>",
         "wallet_topup_success": "Nạp ví thành công!\n\nSố tiền: <b>{amount:,} VND</b>\nSố dư mới: <b>{balance:,} VND</b>",
         "wallet_not_enough": "Số dư không đủ. Vui lòng nạp thêm ví.",
@@ -363,8 +363,8 @@ DEFAULT_TEXTS = {
         "admin_email_confirmed": "[CONFIRMED]",
         "wallet_title": "Your wallet",
         "wallet_balance": "Balance",
-        "wallet_topup_prompt": "Enter amount to top up (VND). Minimum 10,000.",
-        "wallet_topup_invalid": "Invalid amount. Minimum 10,000 VND.",
+        "wallet_topup_prompt": "Enter amount to top up (VND). Minimum 2,000.",
+        "wallet_topup_invalid": "Invalid amount. Minimum 2,000 VND.",
         "wallet_topup_created": "Topup order <b>#{code}</b> created.\n\nAmount: <b>{amount:,} VND</b>",
         "wallet_topup_success": "Topup successful!\n\nAmount: <b>{amount:,} VND</b>\nNew balance: <b>{balance:,} VND</b>",
         "wallet_not_enough": "Insufficient balance. Please top up.",
@@ -608,7 +608,6 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
 # BUTTON BUILDERS
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
-    """Hiện TẤT CẢ SP — hết hàng có tag [HẾT HÀNG]."""
     kb = []
     for p in products:
         stock = int(p.get("stock", 0))
@@ -1466,6 +1465,7 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """FIX: gửi tin nhắn MỚI thay vì edit để chắc chắn hiện prompt nhập tiền."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1475,7 +1475,11 @@ async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_back"), callback_data="wallet", ui_key="back")],
     ])
-    await safe_edit(query, html.escape(t(uid, "wallet_topup_prompt")), reply_markup=kb)
+    await safe_reply(
+        query.message,
+        f"<b>{html.escape(t(uid, 'wallet_topup_prompt'))}</b>\n\n<i>Vi du: 50000</i>",
+        reply_markup=kb
+    )
 
 
 async def handle_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1488,7 +1492,7 @@ async def handle_topup_amount(update: Update, context: ContextTypes.DEFAULT_TYPE
         await safe_reply(update.message, t_html(uid, "wallet_topup_invalid"))
         return True
     amount = int(text)
-    if amount < 10000:
+    if amount < 2000:
         await safe_reply(update.message, t_html(uid, "wallet_topup_invalid"))
         return True
 
@@ -1669,24 +1673,25 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ============================================================
-# TEXT HANDLER
+# TEXT HANDLER (email + topup)
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in Config.ADMIN_IDS:
         return
+    text_in = (update.message.text or "").strip()
+    logger.info(f"handle_user_text: uid={user.id} text='{text_in[:30]}' topup_state={context.user_data.get('topup_state')}")
     if await handle_topup_amount(update, context):
         return
-    text = (update.message.text or "").strip()
-    if not EMAIL_RE.match(text):
+    if not EMAIL_RE.match(text_in):
         return
     order = get_awaiting_email_order(user.id)
     if not order:
         return
-    set_order_email(order["order_code"], text)
+    set_order_email(order["order_code"], text_in)
     await safe_reply(
         update.message,
-        t_html(user.id, "youtube_email_preview", email=html.escape(text)),
+        t_html(user.id, "youtube_email_preview", email=html.escape(text_in)),
         reply_markup=email_confirm_buttons(order["order_code"], uid=user.id)
     )
 
@@ -1765,7 +1770,7 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # ============================================================
-# ADMIN - PRODUCTS
+# ADMIN HANDLERS
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -1945,7 +1950,6 @@ async def admin_add_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
             {"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}}
         )
-        _invalidate_products_cache_from_main = None  # not needed, cache cleared by db module
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
