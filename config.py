@@ -14,3 +14,4 @@ class Config:
     MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://quocchienn:chien207@cluster0.0swxhya.mongodb.net/?appName=Cluster0")
     MONGODB_DB = os.getenv("MONGODB_DB", "telegram_shop")
     ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
+    BINANCE_AUTO_RATE = os.getenv("BINANCE_AUTO_RATE", "true").lower() == "true"
