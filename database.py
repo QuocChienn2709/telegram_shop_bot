@@ -1,6 +1,8 @@
 # database.py
 import json
 import logging
+import threading
+import time
 from datetime import datetime
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import DuplicateKeyError
@@ -10,14 +12,34 @@ logger = logging.getLogger(__name__)
 
 _client = None
 _db = None
+_lock = threading.Lock()
+
+# ============================================================
+# CACHE
+# ============================================================
+_settings_cache = {"data": {}, "ts": 0}
+_texts_cache = {"data": {}, "ts": 0}
+_products_cache = {"data": [], "ts": 0}
+CACHE_TTL_SETTINGS = 60
+CACHE_TTL_TEXTS = 60
+CACHE_TTL_PRODUCTS = 15
 
 
 def _get_client():
     global _client
-    if _client is None:
-        _client = MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=10000)
-        _client.admin.command("ping")
-        logger.info("MongoDB connected")
+    with _lock:
+        if _client is None:
+            _client = MongoClient(
+                Config.MONGODB_URI,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                socketTimeoutMS=10000,
+                maxPoolSize=20,
+                minPoolSize=2,
+                retryWrites=True,
+            )
+            _client.admin.command("ping")
+            logger.info("MongoDB connected")
     return _client
 
 
@@ -36,8 +58,9 @@ def init_db():
     db = _get_db()
     try:
         db.products.create_index([("id", ASCENDING)], unique=True)
+        db.products.create_index([("stock", ASCENDING)])
         db.orders.create_index([("order_code", ASCENDING)], unique=True)
-        db.orders.create_index([("user_id", ASCENDING)])
+        db.orders.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
         db.orders.create_index([("email_status", ASCENDING)])
         db.users.create_index([("user_id", ASCENDING)], unique=True)
         db.settings.create_index([("key", ASCENDING)], unique=True)
@@ -51,6 +74,18 @@ def _next_id(name):
     return db.counters.find_one_and_update(
         {"_id": name}, {"$inc": {"seq": 1}}, upsert=True, return_document=True
     )["seq"]
+
+
+def _invalidate_products_cache():
+    _products_cache["ts"] = 0
+
+
+def _invalidate_settings_cache():
+    _settings_cache["ts"] = 0
+
+
+def _invalidate_texts_cache():
+    _texts_cache["ts"] = 0
 
 
 # ============================================================
@@ -72,6 +107,7 @@ def add_product(name, description, price, stock, keys_list, emoji_id=None, requi
         "requires_email": bool(requires_email),
         "created_at": datetime.utcnow(),
     })
+    _invalidate_products_cache()
     return nid
 
 
@@ -80,6 +116,7 @@ def set_product_requires_email(product_id, requires):
         {"id": int(product_id)},
         {"$set": {"requires_email": bool(requires)}}
     )
+    _invalidate_products_cache()
 
 
 def decrement_stock(pid):
@@ -87,14 +124,19 @@ def decrement_stock(pid):
         {"id": int(pid), "stock": {"$gt": 0}},
         {"$inc": {"stock": -1, "sold": 1}}
     )
+    _invalidate_products_cache()
 
 
 def delete_product(pid):
-    return _get_db().products.delete_one({"id": int(pid)}).deleted_count > 0
+    r = _get_db().products.delete_one({"id": int(pid)}).deleted_count > 0
+    _invalidate_products_cache()
+    return r
 
 
 def delete_all_products():
-    return _get_db().products.delete_many({}).deleted_count
+    r = _get_db().products.delete_many({}).deleted_count
+    _invalidate_products_cache()
+    return r
 
 
 def get_product(pid):
@@ -103,16 +145,26 @@ def get_product(pid):
 
 
 def list_products(limit=5, offset=0):
-    cur = _get_db().products.find(
-        {"stock": {"$gt": 0}},
-        {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1,
-         "emoji_id": 1, "requires_email": 1}
-    ).sort("id", ASCENDING).skip(int(offset)).limit(int(limit))
-    return [_normalize_product(d) for d in cur]
+    """Cache toàn bộ danh sách, phân trang từ cache."""
+    now = time.time()
+    if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
+        cur = _get_db().products.find(
+            {"stock": {"$gt": 0}},
+            {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1,
+             "emoji_id": 1, "requires_email": 1}
+        ).sort("id", ASCENDING).limit(200)
+        _products_cache["data"] = [_normalize_product(d) for d in cur]
+        _products_cache["ts"] = now
+    all_products = _products_cache["data"]
+    return all_products[int(offset):int(offset) + int(limit)]
 
 
 def count_products():
-    return _get_db().products.count_documents({"stock": {"$gt": 0}})
+    """Lấy từ cache — không query DB mỗi lần."""
+    now = time.time()
+    if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
+        list_products(limit=1)
+    return len(_products_cache["data"])
 
 
 def list_all_products(limit=None, offset=0):
@@ -132,6 +184,7 @@ def get_available_key(pid):
         {"$pop": {"keys": -1}, "$inc": {"stock": -1, "sold": 1}},
         return_document=False
     )
+    _invalidate_products_cache()
     if not doc:
         return None
     keys = doc.get("keys") or []
@@ -198,7 +251,6 @@ def update_order_status(order_id, status, key_assigned=None):
 
 
 def set_order_email(order_code, email):
-    """Lưu email tạm — chờ user bấm xác nhận mới gửi admin."""
     _get_db().orders.update_one(
         {"order_code": int(order_code)},
         {"$set": {"customer_email": email, "email_status": "awaiting_user_confirm"}}
@@ -213,7 +265,6 @@ def set_order_email_status(order_code, status):
 
 
 def get_awaiting_email_order(user_id):
-    """Order đang chờ email hoặc chờ user xác nhận."""
     doc = _get_db().orders.find_one(
         {
             "user_id": int(user_id),
@@ -228,8 +279,17 @@ def get_awaiting_email_order(user_id):
 def get_pending_orders_by_user(user_id):
     cur = _get_db().orders.find(
         {"user_id": int(user_id), "status": "pending"}
-    ).sort("created_at", DESCENDING)
+    ).sort("created_at", DESCENDING).limit(20)
     return [_normalize_order(d) for d in cur]
+
+
+def get_orders_by_user_and_ids(user_id, order_ids):
+    """Batch load orders by ids — 1 query."""
+    cur = _get_db().orders.find({
+        "user_id": int(user_id),
+        "order_code": {"$in": [int(i) for i in order_ids]}
+    })
+    return {o["order_code"]: _normalize_order(o) for o in cur}
 
 
 def _normalize_order(doc):
@@ -298,11 +358,19 @@ def count_users():
 
 
 # ============================================================
-# SETTINGS (UI/text emoji)
+# SETTINGS (CACHE)
 # ============================================================
+def _load_settings_cache():
+    cur = _get_db().settings.find({}, {"key": 1, "emoji_id": 1, "_id": 0})
+    _settings_cache["data"] = {d["key"]: d.get("emoji_id") for d in cur}
+    _settings_cache["ts"] = time.time()
+
+
 def get_setting(key):
-    doc = _get_db().settings.find_one({"key": key})
-    return doc.get("emoji_id") if doc else None
+    now = time.time()
+    if now - _settings_cache["ts"] > CACHE_TTL_SETTINGS:
+        _load_settings_cache()
+    return _settings_cache["data"].get(key)
 
 
 def set_setting(key, emoji_id):
@@ -311,22 +379,35 @@ def set_setting(key, emoji_id):
         {"$set": {"emoji_id": emoji_id, "updated_at": datetime.utcnow()}},
         upsert=True
     )
+    _invalidate_settings_cache()
 
 
 def delete_setting(key):
     _get_db().settings.delete_one({"key": key})
+    _invalidate_settings_cache()
 
 
 def get_all_settings():
-    return list(_get_db().settings.find({}, {"key": 1, "emoji_id": 1, "_id": 0}))
+    if time.time() - _settings_cache["ts"] > CACHE_TTL_SETTINGS:
+        _load_settings_cache()
+    return [{"key": k, "emoji_id": v} for k, v in _settings_cache["data"].items()]
 
 
 # ============================================================
-# TEXTS
+# TEXTS (CACHE)
 # ============================================================
+def _load_texts_cache():
+    cur = _get_db().texts.find({}, {"key": 1, "value": 1, "_id": 0})
+    _texts_cache["data"] = {d["key"]: d.get("value") for d in cur}
+    _texts_cache["ts"] = time.time()
+
+
 def get_text(key, default=""):
-    doc = _get_db().texts.find_one({"key": key})
-    return doc.get("value") if doc and doc.get("value") is not None else default
+    now = time.time()
+    if now - _texts_cache["ts"] > CACHE_TTL_TEXTS:
+        _load_texts_cache()
+    v = _texts_cache["data"].get(key)
+    return v if v is not None else default
 
 
 def set_text(key, value):
@@ -335,14 +416,18 @@ def set_text(key, value):
         {"$set": {"value": value, "updated_at": datetime.utcnow()}},
         upsert=True
     )
+    _invalidate_texts_cache()
 
 
 def delete_text(key):
     _get_db().texts.delete_one({"key": key})
+    _invalidate_texts_cache()
 
 
 def get_all_texts():
-    return list(_get_db().texts.find({}, {"key": 1, "value": 1, "_id": 0}))
+    if time.time() - _texts_cache["ts"] > CACHE_TTL_TEXTS:
+        _load_texts_cache()
+    return [{"key": k, "value": v} for k, v in _texts_cache["data"].items()]
 
 
 # ============================================================
