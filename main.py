@@ -1,5 +1,5 @@
 # main.py
-import asyncio, html, json, logging, os, re, time
+import asyncio, html, json, logging, os, re, time, requests
 from datetime import datetime
 from aiohttp import web
 from aiohttp.web import Request, Response
