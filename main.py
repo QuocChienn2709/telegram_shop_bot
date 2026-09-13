@@ -1044,6 +1044,7 @@ async def pay_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def binance_sent_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """FIX: gửi admin kèm nút xác nhận inline."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1051,26 +1052,51 @@ async def binance_sent_callback(update: Update, context: ContextTypes.DEFAULT_TY
         order_code = int(query.data.split("_")[2])
     except (ValueError, IndexError):
         return
-    await safe_edit(query, t_html(uid, "binance_waiting"), reply_markup=None)
     order = get_order(order_code)
-    if order:
-        p = get_product(order["product_id"])
-        rate, rate_source, _ = get_binance_rate_live()
-        usdt = round(order["amount"] / rate, 2)
-        admin_text = (
-            f"<b>Yeu cau xac nhan Binance</b>\n"
-            f"Order: <code>{order_code}</code>\n"
-            f"User: <code>{uid}</code>\n"
-            f"SP: {html.escape(p['name']) if p else '?'}\n"
-            f"So tien: {order['amount']:,} VND ~ {usdt} USDT\n"
-            f"Rate: <code>{rate:,.0f}</code> ({html.escape(rate_source)})\n\n"
-            f"Xac nhan: <code>/confirm {order_code}</code>"
-        )
-        for aid in Config.ADMIN_IDS:
-            try:
-                await safe_send(context.bot, aid, admin_text)
-            except Exception as e:
-                logger.error(f"Notify admin {aid}: {e}")
+    if not order:
+        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
+        return
+    if order["status"] != "pending":
+        await safe_edit(query, t_html(uid, "order_paid"), reply_markup=None)
+        return
+
+    # Cập nhật trạng thái chờ admin xác nhận
+    update_order_status(order_code, "pending")
+
+    # Thông báo user đang chờ
+    await safe_edit(query, t_html(uid, "binance_waiting"), reply_markup=None)
+
+    # Gửi admin kèm nút xác nhận
+    p = get_product(order["product_id"])
+    rate, rate_source, _ = get_binance_rate_live()
+    usdt = round(order["amount"] / rate, 2)
+    user_info = f"@{query.from_user.username}" if query.from_user.username else (query.from_user.full_name or "?")
+
+    admin_text = (
+        f"<b>Yêu cầu xác nhận Binance</b>\n\n"
+        f"• Order: <code>{order_code}</code>\n"
+        f"• User: {html.escape(user_info)} (<code>{uid}</code>)\n"
+        f"• SP: {html.escape(p['name']) if p else '?'}\n"
+        f"• Số tiền: <b>{order['amount']:,} VND</b> ≈ <b>{usdt} USDT</b>\n"
+        f"• Rate: <code>{rate:,.0f}</code> ({html.escape(rate_source)})\n"
+        f"• Memo: <code>DH{order_code}</code>\n\n"
+        f"Kiểm tra Binance → nếu đã nhận USDT → bấm nút dưới."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "Đã nhận tiền - Giao key",
+            callback_data=f"cfbinance_{order_code}"
+        )],
+        [InlineKeyboardButton(
+            "Hủy đơn này",
+            callback_data=f"cancel_{order_code}"
+        )],
+    ])
+    for aid in Config.ADMIN_IDS:
+        try:
+            await safe_send(context.bot, aid, admin_text, reply_markup=kb)
+        except Exception as e:
+            logger.error(f"Notify admin {aid}: {e}")
 
 
 async def back_pay_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1781,6 +1807,71 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
         await safe_send(context.bot, user_uid, t_html(user_uid, "youtube_email_done", email=html.escape(email)))
     except Exception as e:
         logger.error(f"Notify user {user_uid}: {e}")
+
+
+async def confirm_binance_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin bấm nút xác nhận đã nhận USDT Binance → giao key."""
+    query = update.callback_query
+    admin_uid = query.from_user.id
+    if admin_uid not in Config.ADMIN_IDS:
+        await query.answer("Khong co quyen", show_alert=True)
+        return
+    try:
+        oc = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        await query.answer("Loi du lieu", show_alert=True)
+        return
+
+    order = get_order(oc)
+    if not order:
+        await query.answer("Khong tim thay don", show_alert=True)
+        return
+    if order["status"] != "pending":
+        await query.answer(f"Don o trang thai: {order['status']}", show_alert=True)
+        return
+
+    product = get_product(order["product_id"])
+    email_flow = bool(product and product.get("requires_email"))
+
+    if email_flow:
+        update_order_status(oc, "paid", None)
+        set_order_email_status(oc, "awaiting")
+        decrement_stock(order["product_id"])
+        await query.answer("Da xac nhan (email flow)")
+        try:
+            await query.edit_message_text(
+                (query.message.text or "") + "\n\n<b>[DA XAC NHAN - EMAIL FLOW]</b>",
+                parse_mode=ParseMode.HTML, reply_markup=None
+            )
+        except Exception:
+            pass
+        try:
+            await safe_send(context.bot, order["user_id"],
+                            t_html(order["user_id"], "youtube_email_paid_msg"))
+        except Exception as e:
+            logger.error(f"notify: {e}")
+    else:
+        key = get_available_key(order["product_id"])
+        if not key:
+            await query.answer("Het key! Nap them truoc.", show_alert=True)
+            return
+        update_order_status(oc, "paid", key)
+        await query.answer("Da xac nhan va giao key")
+        try:
+            await query.edit_message_text(
+                (query.message.text or "") + f"\n\n<b>[DA XAC NHAN - KEY: {html.escape(key)}]</b>",
+                parse_mode=ParseMode.HTML, reply_markup=None
+            )
+        except Exception:
+            pass
+        lang = get_user_lang(order["user_id"])
+        try:
+            await safe_send(context.bot, order["user_id"],
+                f"{t_html(order['user_id'], 'order_success')}\n\n"
+                f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
+                f"{format_key_display(key, lang)}")
+        except Exception as e:
+            logger.error(f"notify: {e}")
 
 
 # ============================================================
@@ -2842,6 +2933,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(confirm_send_email_callback, pattern=r"^cfmsend_\d+$"))
     app.add_handler(CallbackQueryHandler(cancel_send_email_callback, pattern=r"^cfmcancel_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_email_callback, pattern=r"^cfemail_\d+$"))
+    app.add_handler(CallbackQueryHandler(confirm_binance_callback, pattern=r"^cfbinance_\d+$"))
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
     app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
