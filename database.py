@@ -62,6 +62,7 @@ def init_db():
         db.orders.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
         db.orders.create_index([("type", ASCENDING)])
         db.users.create_index([("user_id", ASCENDING)], unique=True)
+        db.users.create_index([("balance", DESCENDING)])
         db.settings.create_index([("key", ASCENDING)], unique=True)
         db.texts.create_index([("key", ASCENDING)], unique=True)
     except Exception as e:
@@ -144,7 +145,6 @@ def get_product(pid):
 
 
 def list_products(limit=5, offset=0):
-    """HIỆN TẤT CẢ SP kể cả hết hàng."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         cur = _get_db().products.find(
@@ -411,22 +411,6 @@ def subtract_balance(user_id, amount):
 
 
 # ============================================================
-# TOPUP STATE (FIX)
-# ============================================================
-def set_topup_state(user_id, state: bool):
-    _get_db().users.update_one(
-        {"user_id": int(user_id)},
-        {"$set": {"topup_state": bool(state)}},
-        upsert=True
-    )
-
-
-def get_topup_state(user_id) -> bool:
-    doc = _get_db().users.find_one({"user_id": int(user_id)}, {"topup_state": 1})
-    return bool(doc.get("topup_state", False)) if doc else False
-
-
-# ============================================================
 # TOPUP ORDERS
 # ============================================================
 def create_topup_order(order_code, user_id, amount, payment_method="payos"):
@@ -459,6 +443,54 @@ def mark_topup_paid(order_code):
         return False
     add_balance(doc["user_id"], doc["amount"])
     return True
+
+
+# ============================================================
+# ADMIN QUERIES
+# ============================================================
+def list_users_paginated(limit=20, offset=0):
+    cur = _get_db().users.find(
+        {},
+        {"user_id": 1, "username": 1, "first_name": 1, "last_name": 1,
+         "registered_at": 1, "balance": 1, "lang": 1, "_id": 0}
+    ).sort("registered_at", DESCENDING).skip(int(offset)).limit(int(limit))
+    return list(cur)
+
+
+def get_user_detail(user_id):
+    doc = _get_db().users.find_one({"user_id": int(user_id)}, {"_id": 0})
+    return dict(doc) if doc else None
+
+
+def list_users_with_topup(limit=20, offset=0):
+    cur = _get_db().users.find(
+        {"balance": {"$gt": 0}},
+        {"user_id": 1, "username": 1, "first_name": 1, "last_name": 1,
+         "balance": 1, "registered_at": 1, "_id": 0}
+    ).sort("balance", DESCENDING).skip(int(offset)).limit(int(limit))
+    return list(cur)
+
+
+def count_users_with_topup():
+    return _get_db().users.count_documents({"balance": {"$gt": 0}})
+
+
+def get_user_topup_orders(user_id, limit=20):
+    cur = _get_db().orders.find(
+        {"user_id": int(user_id), "type": "topup"},
+        {"order_code": 1, "amount": 1, "status": 1, "created_at": 1,
+         "paid_at": 1, "payment_method": 1, "_id": 0}
+    ).sort("created_at", DESCENDING).limit(int(limit))
+    return list(cur)
+
+
+def get_total_topup_amount(user_id):
+    pipeline = [
+        {"$match": {"user_id": int(user_id), "type": "topup", "status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+    ]
+    result = list(_get_db().orders.aggregate(pipeline))
+    return result[0]["total"] if result else 0
 
 
 # ============================================================
