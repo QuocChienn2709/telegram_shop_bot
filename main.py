@@ -203,6 +203,11 @@ DEFAULT_TEXTS = {
         "binance_not_set": "Admin chưa cấu hình ví Binance.",
         "binance_sent": "Tôi đã chuyển khoản",
         "binance_waiting": "Đang chờ admin xác nhận. Vui lòng đợi.",
+        "admin_received_key": "Đã nhận tiền - Giao key",
+        "admin_received_topup": "Đã nhận USDT - Cộng ví",
+        "admin_cancel_order": "Hủy đơn này",
+        "admin_binance_req": "Yêu cầu xác nhận Binance",
+        "admin_binance_topup_req": "Yêu cầu xác nhận nạp ví Binance",
         "lang_changed": "Đã đổi ngôn ngữ: Tiếng Việt",
         "lang_choose": "Chọn ngôn ngữ để tiếp tục:",
         "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
@@ -290,6 +295,11 @@ DEFAULT_TEXTS = {
         "binance_not_set": "Binance wallet not configured.",
         "binance_sent": "I have sent",
         "binance_waiting": "Waiting for admin confirmation. Please wait.",
+        "admin_received_key": "Received - Deliver key",
+        "admin_received_topup": "Received USDT - Credit wallet",
+        "admin_cancel_order": "Cancel this order",
+        "admin_binance_req": "Binance confirmation request",
+        "admin_binance_topup_req": "Binance topup confirmation request",
         "lang_changed": "Language changed to English",
         "lang_choose": "Choose language to continue:",
         "lang_required": "Please select a language to continue:",
@@ -358,6 +368,9 @@ TEXT_EMOJI_KEYS = {
     "wallet_not_enough": "Số dư không đủ", "email_confirm_required": "Yêu cầu xác nhận email",
     "admin_users_title": "DS người dùng", "admin_topups_title": "Users đã nạp ví",
     "admin_user_detail": "Chi tiết user", "admin_user_topup_history": "Lịch sử nạp ví",
+    "admin_binance_req": "Tiêu đề yêu cầu xác nhận Binance",
+    "admin_binance_topup_req": "Tiêu đề yêu cầu xác nhận nạp Binance",
+    "binance_sent": "Thông báo user đã chuyển khoản",
 }
 
 
@@ -448,6 +461,10 @@ UI_KEYS = {
     "delete": "Biểu tượng xóa", "recheck": "Biểu tượng kiểm tra lại",
     "wallet": "Biểu tượng ví", "topup": "Nút nạp ví",
     "hide": "Biểu tượng ẩn", "oos": "Biểu tượng hết hàng",
+    "binance_sent_btn": "Nút 'Tôi đã chuyển khoản'",
+    "admin_recv_key": "Nút admin nhận tiền giao key",
+    "admin_recv_topup": "Nút admin nhận USDT cộng ví",
+    "admin_cancel": "Nút admin hủy đơn",
 }
 
 
@@ -862,7 +879,7 @@ async def pay_binance_callback(update, context):
             f"{ui_emoji_html('order_code')} <b>{html.escape(t(uid, 'binance_memo'))}:</b> <code>DH{order_code}</code>\n\n"
             f"{t_html(uid, 'binance_note')}")
     kb = InlineKeyboardMarkup([
-        [button(t(uid, "binance_sent"), callback_data=f"binance_sent_{order_code}", ui_key="check")],
+        [button(t(uid, "binance_sent"), callback_data=f"binance_sent_{order_code}", ui_key="binance_sent_btn")],
         [button(t(uid, "btn_back"), callback_data=f"backpay_{order_code}", ui_key="back")],
         [button(t(uid, "btn_cancel"), callback_data=f"cancel_{order_code}", ui_key="cancel")],
     ])
@@ -890,7 +907,8 @@ async def binance_sent_callback(update, context):
     rate, rate_source, _ = get_binance_rate_live()
     usdt = round(order["amount"] / rate, 2)
     user_info = f"@{query.from_user.username}" if query.from_user.username else (query.from_user.full_name or "?")
-    admin_text = (f"<b>Yêu cầu xác nhận Binance</b>\n\n"
+    req_prefix = text_emoji_html("admin_binance_req")
+    admin_text = (f"{req_prefix}<b>{html.escape(t(0, 'admin_binance_req'))}</b>\n\n"
                   f"• Order: <code>{order_code}</code>\n"
                   f"• User: {html.escape(user_info)} (<code>{uid}</code>)\n"
                   f"• SP: {html.escape(p['name']) if p else '?'}\n"
@@ -899,8 +917,8 @@ async def binance_sent_callback(update, context):
                   f"• Memo: <code>DH{order_code}</code>\n\n"
                   f"Kiểm tra Binance → nếu đã nhận USDT → bấm nút dưới.")
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Đã nhận tiền - Giao key", callback_data=f"cfbinance_{order_code}")],
-        [InlineKeyboardButton("Hủy đơn này", callback_data=f"cancel_{order_code}")],
+        [button(t(0, "admin_received_key"), callback_data=f"cfbinance_{order_code}", ui_key="admin_recv_key")],
+        [button(t(0, "admin_cancel_order"), callback_data=f"cancel_{order_code}", ui_key="admin_cancel")],
     ])
     for aid in Config.ADMIN_IDS:
         try:
@@ -1320,7 +1338,7 @@ async def topup_binance_callback(update, context):
             f"<b>Memo:</b> <code>NAP{oc}</code>\n\n"
             f"Sau khi chuyển khoản, nhấn nút bên dưới để admin xác nhận.")
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Tôi đã chuyển khoản", callback_data=f"topup_binance_sent_{oc}")],
+        [button(t(uid, "binance_sent"), callback_data=f"topup_binance_sent_{oc}", ui_key="binance_sent_btn")],
         [button(t(uid, "btn_back"), callback_data="wallet", ui_key="back")],
     ])
     await safe_edit(query, text, reply_markup=kb, disable_web_page_preview=True)
@@ -1348,7 +1366,8 @@ async def topup_binance_sent_callback(update, context):
     rate, src, _ = get_binance_rate_live()
     usdt = round(order["amount"] / rate, 2)
     user_info = f"@{query.from_user.username}" if query.from_user.username else (query.from_user.full_name or "?")
-    admin_text = (f"<b>Yêu cầu xác nhận nạp ví Binance</b>\n\n"
+    req_prefix = text_emoji_html("admin_binance_topup_req")
+    admin_text = (f"{req_prefix}<b>{html.escape(t(0, 'admin_binance_topup_req'))}</b>\n\n"
                   f"• Order: <code>{oc}</code>\n"
                   f"• User: {html.escape(user_info)} (<code>{uid}</code>)\n"
                   f"• Số tiền: <b>{order['amount']:,} VND</b> ≈ <b>{usdt} USDT</b>\n"
@@ -1356,8 +1375,8 @@ async def topup_binance_sent_callback(update, context):
                   f"• Memo: <code>NAP{oc}</code>\n\n"
                   f"Kiểm tra Binance → nếu đã nhận USDT → bấm nút dưới.")
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Đã nhận USDT - Cộng ví", callback_data=f"cfbinancetopup_{oc}")],
-        [InlineKeyboardButton("Hủy đơn này", callback_data=f"cancel_{oc}")],
+        [button(t(0, "admin_received_topup"), callback_data=f"cfbinancetopup_{oc}", ui_key="admin_recv_topup")],
+        [button(t(0, "admin_cancel_order"), callback_data=f"cancel_{oc}", ui_key="admin_cancel")],
     ])
     for aid in Config.ADMIN_IDS:
         try:
@@ -2310,6 +2329,8 @@ TEXT_KEYS_INFO = {
     "lang_required": "Yeu cau chon ngon ngu", "youtube_email_ask": "Yeu cau gui email",
     "youtube_email_preview": "Xem truoc email", "youtube_email_pending": "Cho admin xac nhan email",
     "youtube_email_done": "Hoan tat email", "out_of_stock_wait": "Thong bao het hang cho admin",
+    "admin_binance_req": "Tieu de yeu cau xac nhan Binance",
+    "admin_binance_topup_req": "Tieu de yeu cau xac nhan nap Binance",
 }
 
 
