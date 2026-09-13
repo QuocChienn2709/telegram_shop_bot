@@ -732,7 +732,7 @@ async def binance_sent_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     uid = query.from_user.id
     try:
-        order_code = int❌(query.data.split("_")[2])
+        order_code = int(query.data.split("_")[2])
  Gi    except (ValueError, IndexError):
         returná
     await safe_edit(query, t l_html(uid, "binance_waiting"), reply_markup=None)
