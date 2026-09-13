@@ -144,7 +144,7 @@ def get_product(pid):
 
 
 def list_products(limit=5, offset=0):
-    """HIỆN TẤT CẢ SP kể cả hết hàng (không filter stock > 0)."""
+    """HIỆN TẤT CẢ SP kể cả hết hàng."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         cur = _get_db().products.find(
@@ -159,7 +159,6 @@ def list_products(limit=5, offset=0):
 
 
 def count_products():
-    """Đếm tất cả SP."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         list_products(limit=1)
@@ -409,6 +408,22 @@ def subtract_balance(user_id, amount):
         {"$inc": {"balance": -int(amount)}}
     )
     return result.modified_count > 0
+
+
+# ============================================================
+# TOPUP STATE (FIX: lưu DB tránh mất khi restart)
+# ============================================================
+def set_topup_state(user_id, state: bool):
+    _get_db().users.update_one(
+        {"user_id": int(user_id)},
+        {"$set": {"topup_state": bool(state)}},
+        upsert=True
+    )
+
+
+def get_topup_state(user_id) -> bool:
+    doc = _get_db().users.find_one({"user_id": int(user_id)}, {"topup_state": 1})
+    return bool(doc.get("topup_state", False)) if doc else False
 
 
 # ============================================================
