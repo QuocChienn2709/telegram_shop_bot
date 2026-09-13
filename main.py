@@ -68,14 +68,8 @@ def _fetch_binance_p2p():
         "https://p2p.binance.com/bapi/c2c/v2/public/c2c/adv/search",
     ]
     payload = {
-        "asset": "USDT",
-        "fiat": "VND",
-        "merchantCheck": False,
-        "page": 1,
-        "payTypes": [],
-        "publisherType": None,
-        "rows": 5,
-        "tradeType": "SELL",
+        "asset": "USDT", "fiat": "VND", "merchantCheck": False, "page": 1,
+        "payTypes": [], "publisherType": None, "rows": 5, "tradeType": "SELL",
     }
     headers = {
         "Accept": "application/json, text/plain, */*",
@@ -182,6 +176,10 @@ DEFAULT_TEXTS = {
         "btn_cancel": "Hủy đơn",
         "btn_back_pay": "Quay lại thanh toán",
         "btn_back_menu": "Quay lại menu",
+        "btn_refresh": "Load lại",
+        "btn_lang": "Ngôn ngữ",
+        "btn_lang_short": "Đổi ngôn ngữ",
+        "refreshed": "Đã load lại",
         "not_found": "Không tìm thấy sản phẩm.",
         "out_of_stock": "Sản phẩm đã hết hàng.",
         "invalid_data": "Dữ liệu không hợp lệ.",
@@ -257,6 +255,10 @@ DEFAULT_TEXTS = {
         "btn_cancel": "Cancel order",
         "btn_back_pay": "Back to payment",
         "btn_back_menu": "Back to menu",
+        "btn_refresh": "Refresh",
+        "btn_lang": "Language",
+        "btn_lang_short": "Change language",
+        "refreshed": "Refreshed",
         "not_found": "Product not found.",
         "out_of_stock": "Out of stock.",
         "invalid_data": "Invalid data.",
@@ -464,6 +466,7 @@ UI_KEYS = {
     "back": "Nút quay lại",
     "next": "Nút trang sau",
     "prev": "Nút trang trước",
+    "refresh": "Nút load lại",
     "check": "Nút kiểm tra thanh toán",
     "cancel": "Nút hủy đơn",
     "pay": "Nút thanh toán chung",
@@ -555,7 +558,7 @@ async def validate_custom_emoji(bot, chat_id, emoji_id):
 
 
 # ============================================================
-# BUTTON BUILDERS
+# BUTTON BUILDERS (UPDATED: thêm refresh + lang)
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
     kb = []
@@ -566,14 +569,21 @@ def product_buttons(products, page=0, per_page=5, uid=None):
             kw["icon_custom_emoji_id"] = p["emoji_id"]
         kb.append([InlineKeyboardButton(**kw)])
 
+    # Hàng điều hướng: Trước | Load lại | Sau
     nav = []
     if page > 0:
         nav.append(button(t(uid, "btn_prev"), callback_data=f"page_{page-1}", ui_key="prev"))
+    nav.append(button(t(uid, "btn_refresh"), callback_data=f"refresh_{page}", ui_key="refresh"))
     if len(products) == per_page:
         nav.append(button(t(uid, "btn_next"), callback_data=f"page_{page+1}", ui_key="next"))
     if nav:
         kb.append(nav)
-    kb.append([button(t(uid, "btn_orders"), callback_data="my_orders", ui_key="orders")])
+
+    # Hàng dưới: Đơn hàng chờ | Ngôn ngữ
+    kb.append([
+        button(t(uid, "btn_orders"), callback_data="my_orders", ui_key="orders"),
+        button(t(uid, "btn_lang"), callback_data="menu_lang", ui_key="lang"),
+    ])
     return InlineKeyboardMarkup(kb)
 
 
@@ -617,19 +627,13 @@ def email_confirm_buttons(order_code, uid=None):
 
 
 # ============================================================
-# EMAIL FLOW HELPER - FIX: fetch user info nếu cần, log rõ
+# EMAIL FLOW HELPER
 # ============================================================
 async def _notify_admin_email_request(bot, order, email, tg_user=None):
-    """
-    Gửi thông báo cho admin kèm nút xác nhận.
-    tg_user: có thể là object User hoặc None.
-    Trả về số admin đã gửi thành công.
-    """
     try:
         product = get_product(order["product_id"])
         prod_name = html.escape(product["name"]) if product else "?"
 
-        # Lấy thông tin user
         if tg_user is not None:
             if getattr(tg_user, "username", None):
                 user_info = f"@{tg_user.username}"
@@ -668,10 +672,7 @@ async def _notify_admin_email_request(bot, order, email, tg_user=None):
             except Exception as e:
                 logger.error(f"Notify admin {aid} failed: {e}")
         if sent == 0:
-            logger.error(
-                f"Khong gui duoc cho admin nao! "
-                f"ADMIN_IDS={Config.ADMIN_IDS}"
-            )
+            logger.error(f"Khong gui duoc cho admin nao! ADMIN_IDS={Config.ADMIN_IDS}")
         return sent
     except Exception as e:
         logger.error(f"_notify_admin_email_request error: {e}", exc_info=True)
@@ -740,6 +741,46 @@ async def setlang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query,
         f"{title_html}\n\n{t_html(uid, 'shop_prompt')}",
         reply_markup=product_buttons(prods, page=0, uid=uid)
+    )
+
+
+async def menu_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hiện bảng chọn ngôn ngữ ngay trong menu sản phẩm."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_lang_vi"), callback_data="setlang_vi", ui_key="lang")],
+        [button(t(uid, "btn_lang_en"), callback_data="setlang_en", ui_key="lang")],
+        [button(t(uid, "btn_back"), callback_data="back_list", ui_key="back")],
+    ])
+    await safe_edit(query, t_html(uid, "lang_choose"), reply_markup=kb)
+
+
+async def refresh_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Load lại danh sách sản phẩm — không cần /start."""
+    query = update.callback_query
+    uid = query.from_user.id
+    # Trả lời ngay để user thấy phản hồi tức thì
+    try:
+        await query.answer(t(uid, "refreshed"), show_alert=False)
+    except Exception:
+        pass
+
+    try:
+        page = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        page = 0
+
+    prods = list_products(limit=5, offset=page * 5)
+    if not prods:
+        await safe_edit(query, t_html(uid, "no_more"), reply_markup=None)
+        return
+
+    await safe_edit(
+        query,
+        f"<b>{html.escape(t(uid, 'list_title', page=page + 1))}</b>",
+        reply_markup=product_buttons(prods, page, uid=uid)
     )
 
 
@@ -1081,7 +1122,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# TEXT HANDLER (email capture)
+# TEXT HANDLER
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1090,14 +1131,13 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
     logger.info(f"handle_user_text: user={user.id} text='{text[:50]}'")
     if not EMAIL_RE.match(text):
-        logger.info("  -> Khong phai email, bo qua")
         return
     order = get_awaiting_email_order(user.id)
     logger.info(f"  -> Order awaiting: {order['order_code'] if order else None}")
     if not order:
         return
     set_order_email(order["order_code"], text)
-    logger.info(f"  -> Da luu email, hien preview cho user")
+    logger.info(f"  -> Da luu email, hien preview")
     await safe_reply(
         update.message,
         t_html(user.id, "youtube_email_preview", email=html.escape(text)),
@@ -1105,9 +1145,6 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ============================================================
-# USER CONFIRM SEND EMAIL
-# ============================================================
 async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1117,8 +1154,6 @@ async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFA
     except (ValueError, IndexError):
         await query.answer("Loi du lieu", show_alert=True)
         return
-
-    logger.info(f"confirm_send_email: uid={uid} order={order_code}")
 
     order = get_order(order_code)
     if not order:
@@ -1130,7 +1165,6 @@ async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFA
 
     email = order.get("customer_email") or ""
     set_order_email_status(order_code, "pending_admin")
-    logger.info(f"  -> Set status pending_admin for {order_code}")
 
     await safe_edit(
         query,
@@ -1138,13 +1172,10 @@ async def confirm_send_email_callback(update: Update, context: ContextTypes.DEFA
         reply_markup=None
     )
 
-    # FIX: Truyền tg_user (không phải uid)
     sent = await _notify_admin_email_request(
         context.bot, order, email, tg_user=query.from_user
     )
     logger.info(f"  -> Sent to {sent} admin(s)")
-    if sent == 0:
-        logger.error(f"Khong gui duoc cho admin nao! order={order_code}")
 
 
 async def cancel_send_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1156,24 +1187,16 @@ async def cancel_send_email_callback(update: Update, context: ContextTypes.DEFAU
     except (ValueError, IndexError):
         return
     order = get_order(order_code)
-    if not order:
+    if not order or order.get("email_status") != "awaiting_user_confirm":
         await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
         return
-    if order.get("email_status") != "awaiting_user_confirm":
-        await safe_edit(query, t_html(uid, "order_not_found"), reply_markup=None)
-        return
-
     set_order_email_status(order_code, "awaiting")
     await safe_edit(query, t_html(uid, "youtube_email_cancelled"), reply_markup=None)
 
 
-# ============================================================
-# ADMIN CONFIRM EMAIL
-# ============================================================
 async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     admin_uid = query.from_user.id
-    logger.info(f"confirm_email_callback: admin={admin_uid} data={query.data}")
     if admin_uid not in Config.ADMIN_IDS:
         await query.answer("Khong co quyen", show_alert=True)
         return
@@ -1208,7 +1231,6 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
             context.bot, user_uid,
             t_html(user_uid, "youtube_email_done", email=html.escape(email))
         )
-        logger.info(f"  -> Notified user {user_uid} for order {oc}")
     except Exception as e:
         logger.error(f"Notify user {user_uid}: {e}")
 
@@ -2131,6 +2153,8 @@ async def main():
     app.add_handler(CallbackQueryHandler(cancel_send_email_callback, pattern=r"^cfmcancel_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_email_callback, pattern=r"^cfemail_\d+$"))
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
+    app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
+    app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
     app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
