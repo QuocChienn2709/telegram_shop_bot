@@ -3,7 +3,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.errors import DuplicateKeyError
 from config import Config
@@ -62,6 +62,7 @@ def init_db():
         db.orders.create_index([("order_code", ASCENDING)], unique=True)
         db.orders.create_index([("user_id", ASCENDING), ("status", ASCENDING)])
         db.orders.create_index([("email_status", ASCENDING)])
+        db.orders.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
         db.users.create_index([("user_id", ASCENDING)], unique=True)
         db.settings.create_index([("key", ASCENDING)], unique=True)
         db.texts.create_index([("key", ASCENDING)], unique=True)
@@ -145,7 +146,6 @@ def get_product(pid):
 
 
 def list_products(limit=5, offset=0):
-    """Cache toàn bộ danh sách, phân trang từ cache."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         cur = _get_db().products.find(
@@ -160,7 +160,6 @@ def list_products(limit=5, offset=0):
 
 
 def count_products():
-    """Lấy từ cache — không query DB mỗi lần."""
     now = time.time()
     if now - _products_cache["ts"] > CACHE_TTL_PRODUCTS:
         list_products(limit=1)
@@ -283,8 +282,31 @@ def get_pending_orders_by_user(user_id):
     return [_normalize_order(d) for d in cur]
 
 
+def get_recent_orders_by_user(user_id, hours=24):
+    """Lấy cả đơn pending + đơn cancelled trong `hours` giờ gần đây."""
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cur = _get_db().orders.find({
+        "user_id": int(user_id),
+        "$or": [
+            {"status": "pending"},
+            {"status": "cancelled", "created_at": {"$gte": cutoff}},
+        ],
+    }).sort("created_at", DESCENDING).limit(20)
+    return [_normalize_order(d) for d in cur]
+
+
+def restore_cancelled_order(order_code, key_assigned=None):
+    """Khôi phục đơn đã hủy thành paid (khi phát hiện đã thanh toán)."""
+    upd = {"$set": {
+        "status": "paid",
+        "paid_at": datetime.utcnow(),
+    }}
+    if key_assigned is not None:
+        upd["$set"]["key_assigned"] = key_assigned
+    _get_db().orders.update_one({"order_code": int(order_code)}, upd)
+
+
 def get_orders_by_user_and_ids(user_id, order_ids):
-    """Batch load orders by ids — 1 query."""
     cur = _get_db().orders.find({
         "user_id": int(user_id),
         "order_code": {"$in": [int(i) for i in order_ids]}
