@@ -218,6 +218,7 @@ def create_order(order_id, user_id, product_id, quantity, amount, payment_method
             "key_assigned": None,
             "customer_email": None,
             "email_status": None,
+            "hidden": False,
             "created_at": datetime.utcnow(),
             "paid_at": None,
         })
@@ -288,6 +289,7 @@ def get_recent_orders_by_user(user_id, hours=24):
     cur = _get_db().orders.find({
         "user_id": int(user_id),
         "type": "product",
+        "hidden": {"$ne": True},
         "$or": [
             {"status": "pending"},
             {"status": "cancelled", "created_at": {"$gte": cutoff}},
@@ -306,6 +308,15 @@ def restore_cancelled_order(order_code, key_assigned=None):
     _get_db().orders.update_one({"order_code": int(order_code)}, upd)
 
 
+def hide_order(order_code, user_id):
+    """Ẩn đơn cancelled khỏi danh sách user."""
+    result = _get_db().orders.update_one(
+        {"order_code": int(order_code), "user_id": int(user_id), "status": "cancelled"},
+        {"$set": {"hidden": True}}
+    )
+    return result.modified_count > 0
+
+
 def _normalize_order(doc):
     if not doc:
         return None
@@ -314,6 +325,7 @@ def _normalize_order(doc):
     d.setdefault("customer_email", None)
     d.setdefault("email_status", None)
     d.setdefault("type", "product")
+    d.setdefault("hidden", False)
     return d
 
 
