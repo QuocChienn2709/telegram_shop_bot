@@ -36,6 +36,9 @@ from database import (
     get_all_user_ids, count_users,
     get_user_balance, add_balance, subtract_balance,
     create_topup_order, mark_topup_paid,
+    list_users_paginated, get_user_detail,
+    list_users_with_topup, count_users_with_topup,
+    get_user_topup_orders, get_total_topup_amount,
     get_setting, set_setting, delete_setting, get_all_settings,
     get_text, set_text, delete_text, get_all_texts,
     get_binance_address, set_binance_address,
@@ -267,6 +270,10 @@ DEFAULT_TEXTS = {
         "wallet_topup_success": "Nạp ví thành công!\n\nSố tiền: <b>{amount:,} VND</b>\nSố dư mới: <b>{balance:,} VND</b>",
         "wallet_not_enough": "Số dư không đủ. Vui lòng nạp thêm ví.",
         "wallet_paid_success": "Đã thanh toán bằng ví!\n\nĐã trừ: <b>{amount:,} VND</b>\nSố dư còn: <b>{balance:,} VND</b>",
+        "admin_users_title": "Danh sách người dùng",
+        "admin_topups_title": "Danh sách users đã nạp ví",
+        "admin_user_detail": "Chi tiết người dùng",
+        "admin_user_topup_history": "Lịch sử nạp ví",
     },
     "en": {
         "shop_empty": "No products available yet.",
@@ -369,6 +376,10 @@ DEFAULT_TEXTS = {
         "wallet_topup_success": "Topup successful!\n\nAmount: <b>{amount:,} VND</b>\nNew balance: <b>{balance:,} VND</b>",
         "wallet_not_enough": "Insufficient balance. Please top up.",
         "wallet_paid_success": "Paid with wallet!\n\nDeducted: <b>{amount:,} VND</b>\nRemaining: <b>{balance:,} VND</b>",
+        "admin_users_title": "Users list",
+        "admin_topups_title": "Users with wallet balance",
+        "admin_user_detail": "User detail",
+        "admin_user_topup_history": "Topup history",
     },
 }
 
@@ -426,6 +437,10 @@ TEXT_EMOJI_KEYS = {
     "wallet_topup_success": "Nạp ví thành công",
     "wallet_not_enough": "Số dư không đủ",
     "email_confirm_required": "Yêu cầu xác nhận email",
+    "admin_users_title": "DS người dùng",
+    "admin_topups_title": "Users đã nạp ví",
+    "admin_user_detail": "Chi tiết user",
+    "admin_user_topup_history": "Lịch sử nạp ví",
 }
 
 
@@ -1465,7 +1480,6 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def topup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """FIX: gửi tin nhắn MỚI thay vì edit để chắc chắn hiện prompt nhập tiền."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1673,7 +1687,7 @@ async def pay_wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ============================================================
-# TEXT HANDLER (email + topup)
+# TEXT HANDLER
 # ============================================================
 async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -1770,7 +1784,7 @@ async def confirm_email_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # ============================================================
-# ADMIN HANDLERS
+# ADMIN - PRODUCTS
 # ============================================================
 async def admin_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in Config.ADMIN_IDS:
@@ -2168,6 +2182,176 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
+# ADMIN - USERS QUERIES
+# ============================================================
+async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    parts = update.message.text.split()
+    page = 1
+    if len(parts) >= 2:
+        try:
+            page = max(1, int(parts[1]))
+        except ValueError:
+            page = 1
+
+    per_page = 20
+    offset = (page - 1) * per_page
+    total = count_users()
+    if total == 0:
+        await safe_reply(update.message, "Chua co user nao.")
+        return
+
+    users = list_users_paginated(limit=per_page, offset=offset)
+    if not users:
+        await safe_reply(update.message, f"Trang {page} khong co du lieu.")
+        return
+
+    text = f"<b>{html.escape(t(0, 'admin_users_title'))}</b>\n"
+    text += f"Trang {page}/{(total - 1) // per_page + 1} - Tong: <b>{total}</b>\n\n"
+
+    for i, u in enumerate(users, 1):
+        uid = u.get("user_id", "?")
+        username = u.get("username")
+        first = u.get("first_name") or ""
+        last = u.get("last_name") or ""
+        full_name = f"{first} {last}".strip() or "?"
+        bal = int(u.get("balance", 0))
+        lang = u.get("lang", "vi")
+
+        line = f"{offset + i}. <code>{uid}</code>"
+        if username:
+            line += f" @{html.escape(username)}"
+        line += f" - {html.escape(full_name)}"
+        line += f" - Vi: <b>{bal:,}d</b>"
+        line += f" [{lang}]"
+        text += line + "\n"
+
+    nav = []
+    if page > 1:
+        nav.append(f"<code>/users {page - 1}</code>")
+    if offset + per_page < total:
+        nav.append(f"<code>/users {page + 1}</code>")
+    if nav:
+        text += "\n<i>Dieu huong: " + " | ".join(nav) + "</i>"
+    text += f"\n\nXem chi tiet: <code>/user &lt;id&gt;</code>"
+
+    await safe_reply(update.message, text)
+
+
+async def admin_user_detail_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    parts = update.message.text.split()
+    if len(parts) < 2:
+        await safe_reply(update.message, "Cu phap: <code>/user &lt;user_id&gt;</code>")
+        return
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await safe_reply(update.message, "user_id khong hop le.")
+        return
+
+    u = get_user_detail(target_id)
+    if not u:
+        await safe_reply(update.message, f"Khong tim thay user <code>{target_id}</code>.")
+        return
+
+    username = u.get("username")
+    first = u.get("first_name") or ""
+    last = u.get("last_name") or ""
+    full_name = f"{first} {last}".strip() or "?"
+    bal = int(u.get("balance", 0))
+    reg = u.get("registered_at")
+    reg_str = reg.strftime("%Y-%m-%d %H:%M") if reg else "?"
+
+    total_topup = get_total_topup_amount(target_id)
+    topup_history = get_user_topup_orders(target_id, limit=10)
+
+    text = (
+        f"<b>{html.escape(t(0, 'admin_user_detail'))}</b>\n\n"
+        f"- ID: <code>{target_id}</code>\n"
+        f"- Username: {('@' + html.escape(username)) if username else '—'}\n"
+        f"- Ten: {html.escape(full_name)}\n"
+        f"- Ngon ngu: <b>{u.get('lang', 'vi')}</b>\n"
+        f"- Ngay DK: {reg_str}\n"
+        f"- So du vi: <b>{bal:,} VND</b>\n"
+        f"- Tong da nap: <b>{total_topup:,} VND</b>\n\n"
+    )
+
+    if topup_history:
+        text += f"<b>{html.escape(t(0, 'admin_user_topup_history'))}:</b>\n"
+        for h in topup_history:
+            oc = h.get("order_code", "?")
+            amt = h.get("amount", 0)
+            status = h.get("status", "?")
+            created = h.get("created_at")
+            dt = created.strftime("%d/%m %H:%M") if created else "?"
+            status_icon = "OK" if status == "paid" else "..."
+            text += f"- [{status_icon}] <code>{oc}</code> - {amt:,}d - {dt}\n"
+    else:
+        text += "<i>Chua co don nap nao.</i>"
+
+    await safe_reply(update.message, text)
+
+
+async def admin_topups(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    parts = update.message.text.split()
+    page = 1
+    if len(parts) >= 2:
+        try:
+            page = max(1, int(parts[1]))
+        except ValueError:
+            page = 1
+
+    per_page = 20
+    offset = (page - 1) * per_page
+    total = count_users_with_topup()
+    if total == 0:
+        await safe_reply(update.message, "Chua co user nao nap vi.")
+        return
+
+    users = list_users_with_topup(limit=per_page, offset=offset)
+    if not users:
+        await safe_reply(update.message, f"Trang {page} khong co du lieu.")
+        return
+
+    text = f"<b>{html.escape(t(0, 'admin_topups_title'))}</b>\n"
+    text += f"Trang {page}/{(total - 1) // per_page + 1} - Tong: <b>{total}</b>\n\n"
+
+    total_balance = 0
+    for i, u in enumerate(users, 1):
+        uid = u.get("user_id", "?")
+        username = u.get("username")
+        first = u.get("first_name") or ""
+        last = u.get("last_name") or ""
+        full_name = f"{first} {last}".strip() or "?"
+        bal = int(u.get("balance", 0))
+        total_balance += bal
+
+        line = f"{offset + i}. <code>{uid}</code>"
+        if username:
+            line += f" @{html.escape(username)}"
+        line += f" - {html.escape(full_name)}"
+        line += f" - <b>{bal:,}d</b>"
+        text += line + "\n"
+
+    text += f"\n<b>Tong so du trang nay: {total_balance:,} VND</b>"
+
+    nav = []
+    if page > 1:
+        nav.append(f"<code>/topups {page - 1}</code>")
+    if offset + per_page < total:
+        nav.append(f"<code>/topups {page + 1}</code>")
+    if nav:
+        text += "\n<i>Dieu huong: " + " | ".join(nav) + "</i>"
+
+    await safe_reply(update.message, text)
+
+
+# ============================================================
 # ADMIN - SETUI
 # ============================================================
 def _resolve_setui_key(key):
@@ -2435,6 +2619,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update.message,
         f"<b>Stats</b>\n"
         f"Users: <code>{count_users()}</code>\n"
+        f"Users co vi: <code>{count_users_with_topup()}</code>\n"
         f"SP: <code>{count_all_products()}</code>\n"
         f"Con: <code>{count_products()}</code>\n"
         f"Rate: <code>{live:,.2f}</code> ({html.escape(src)})")
@@ -2452,15 +2637,24 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/setdesc &lt;id&gt; Mo ta</code>\n"
         "<code>/setemoji &lt;id&gt; [emoji]</code>\n"
         "<code>/list</code> / <code>/list2</code> / <code>/detail &lt;id&gt;</code>\n"
-        "<code>/del &lt;id&gt;</code> / <code>/delall confirm</code>\n"
+        "<code>/del &lt;id&gt;</code> / <code>/delall confirm</code>\n\n"
+        "<b>Users:</b>\n"
+        "<code>/users [page]</code> - DS users\n"
+        "<code>/user &lt;id&gt;</code> - Chi tiet user\n"
+        "<code>/topups [page]</code> - Users da nap vi\n\n"
+        "<b>Binance:</b>\n"
         "<code>/setbinance &lt;address&gt; [network]</code>\n"
         "<code>/setrate &lt;VND_per_USDT&gt;</code>\n"
         "<code>/viewbinance</code> / <code>/refreshrate</code>\n"
-        "<code>/confirm &lt;order&gt;</code>\n"
+        "<code>/confirm &lt;order&gt;</code>\n\n"
+        "<b>UI + Text Emoji:</b>\n"
         "<code>/setui &lt;key&gt; [emoji]</code>\n"
         "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n"
+        "<code>/testui &lt;key&gt;</code>\n\n"
+        "<b>Texts:</b>\n"
         "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
-        "<code>/viewtext</code> / <code>/deltext</code>\n"
+        "<code>/viewtext</code> / <code>/deltext</code>\n\n"
+        "<b>Khac:</b>\n"
         "<code>/broadcast &lt;msg&gt;</code> / <code>/stats</code>"
     )
     await safe_reply(update.message, txt)
@@ -2563,7 +2757,7 @@ async def payos_webhook(request: Request):
                         except Exception as e:
                             logger.error(f"notify: {e}")
             elif order["status"] == "cancelled":
-                logger.info(f"Late webhook for cancelled order {oc} — restoring")
+                logger.info(f"Late webhook for cancelled order {oc} - restoring")
                 product = get_product(order["product_id"])
                 email_flow = bool(product and product.get("requires_email"))
                 if email_flow:
@@ -2621,6 +2815,9 @@ async def main():
     app.add_handler(CommandHandler("confirm", admin_confirm_order))
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("stats", admin_stats))
+    app.add_handler(CommandHandler("users", admin_users))
+    app.add_handler(CommandHandler("user", admin_user_detail_cmd))
+    app.add_handler(CommandHandler("topups", admin_topups))
     app.add_handler(CommandHandler("setui", admin_setui))
     app.add_handler(CommandHandler("setui_force", admin_setui_force))
     app.add_handler(CommandHandler("viewui", admin_viewui))
