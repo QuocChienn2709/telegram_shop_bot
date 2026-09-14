@@ -35,6 +35,8 @@ from database import (
     list_users_paginated, get_user_detail,
     list_users_with_topup, count_users_with_topup,
     get_user_topup_orders, get_total_topup_amount,
+    get_top_depositors, get_user_topup_rank,
+    count_user_orders, get_user_total_spent,
     get_setting, set_setting, delete_setting, get_all_settings,
     get_text, set_text, delete_text, get_all_texts,
     get_binance_address, set_binance_address,
@@ -146,15 +148,17 @@ def get_binance_rate_live():
 # ============================================================
 DEFAULT_TEXTS = {
     "vi": {
+        # Shop
         "shop_empty": "Cửa hàng hiện chưa có sản phẩm.",
         "shop_title": "Cửa hàng tài khoản Pro",
         "shop_prompt": "Chọn sản phẩm bên dưới:",
         "no_more": "Không còn sản phẩm nào.",
         "list_title": "Danh sách sản phẩm (trang {page})",
+        # Buttons
         "btn_prev": "Trước", "btn_next": "Sau", "btn_orders": "Đơn hàng chờ",
         "btn_buy": "Mua ngay", "btn_back": "Quay lại",
         "btn_check": "Đã thanh toán? Kiểm tra", "btn_cancel": "Hủy đơn",
-        "btn_back_pay": "Quay lại thanh toán", "btn_back_menu": "Quay lại menu",
+        "btn_back_pay": "Quay lại thanh toán", "btn_back_menu": "Về menu chính",
         "btn_back_shop": "Về cửa hàng",
         "btn_pay_again": "Thanh toán", "btn_delete_order": "Xóa đơn",
         "btn_hide_order": "Ẩn đơn", "btn_recheck_order": "Kiểm tra lại",
@@ -163,16 +167,69 @@ DEFAULT_TEXTS = {
         "btn_wallet": "Ví của tôi", "btn_topup": "Nạp ví",
         "btn_pay_wallet": "Thanh toán bằng ví",
         "btn_topup_payos": "Nạp qua PayOS", "btn_topup_binance": "Nạp qua Binance",
+        # Main menu buttons
+        "menu_title": "CHÀO MỪNG {name} ĐẾN VỚI SHOP",
+        "menu_prompt": "Chọn chức năng bên dưới",
+        "menu_shop": "Cửa hàng",
+        "menu_account": "Tài khoản",
+        "menu_history_buy": "Lịch sử mua",
+        "menu_history_topup": "Lịch sử nạp",
+        "menu_wallet": "Ví của tôi",
+        "menu_topup_bank": "Nạp bank",
+        "menu_top": "Top nạp tiền",
+        "menu_download": "File Hack / IPA",
+        "menu_help": "Hỗ trợ",
+        "menu_channel_label": "Kênh thông báo",
+        "menu_admin_label": "Admin",
+        "menu_balance_label": "Số dư",
+        "menu_total_topup_label": "Tổng đã nạp",
+        # Account
+        "account_title": "THÔNG TIN TÀI KHOẢN",
+        "account_id": "ID",
+        "account_username": "Username",
+        "account_name": "Tên",
+        "account_registered": "Ngày đăng ký",
+        "account_balance": "Số dư",
+        "account_total_topup": "Tổng đã nạp",
+        "account_total_spent": "Tổng đã chi",
+        "account_total_orders": "Đơn đã mua",
+        "account_lang": "Ngôn ngữ",
+        # Top
+        "top_title": "TOP NẠP TIỀN",
+        "top_empty": "Chưa có ai nạp tiền.",
+        "top_row": "{rank}. {name} — {amount}đ",
+        "top_your_rank": "Hạng của bạn: #{rank} ({amount}đ)",
+        "top_your_none": "Bạn chưa có trong bảng xếp hạng.",
+        # Download
+        "download_title": "LINK TẢI / FILE HACK",
+        "download_empty": "Admin chưa cấu hình link tải.",
+        "download_repo_btn": "Link Repo",
+        "download_ipa_btn": "Tải IPA",
+        "download_other_btn": "File khác",
+        "download_note": "Nhấn các nút bên dưới để mở link. Nếu không mở được, copy link trong phần Tài khoản → Liên hệ admin.",
+        # Wallet history
+        "wallet_history": "Lịch sử nạp tiền",
+        "wallet_history_title": "LỊCH SỬ NẠP TIỀN",
+        "wallet_history_empty": "Bạn chưa có giao dịch nạp tiền nào.",
+        "wallet_history_row": "{icon} <code>#{code}</code> — {amount}đ — {date}",
+        "wallet_history_total": "Tổng đã nạp: {total}đ",
+        "wallet_history_status_paid": "OK",
+        "wallet_history_status_pending": "...",
+        "wallet_history_status_cancelled": "X",
+        # Refreshed
         "refreshed": "Đã load lại",
+        # Common
         "not_found": "Không tìm thấy sản phẩm.",
         "out_of_stock": "Sản phẩm đã hết hàng.",
         "out_of_stock_wait": "Sản phẩm đã hết hàng. Vui lòng chờ admin thêm hàng.",
         "stock_out_tag": "[HẾT HÀNG]",
         "invalid_data": "Dữ liệu không hợp lệ.",
+        # Detail
         "detail_title": "Chi tiết sản phẩm", "detail_name": "Tên",
         "detail_desc": "Mô tả", "detail_price": "Giá",
         "detail_stock": "Tồn kho", "detail_sold": "Đã bán",
         "detail_no_desc": "(không có mô tả)",
+        # Order
         "order_title": "Đơn hàng", "order_product": "Sản phẩm",
         "order_amount": "Số tiền", "order_pay": "Nhấn để thanh toán",
         "order_content": "Nội dung CK",
@@ -195,6 +252,7 @@ DEFAULT_TEXTS = {
         "payment_method_title": "Chọn phương thức thanh toán:",
         "btn_pay_payos": "Thanh toán VND (PayOS)",
         "btn_pay_binance": "Thanh toán USDT (Binance)",
+        # Binance
         "binance_title": "Thanh toán Binance USDT",
         "binance_amount": "Số tiền", "binance_address": "Địa chỉ ví",
         "binance_network": "Mạng", "binance_memo": "Nội dung/Memo",
@@ -208,10 +266,12 @@ DEFAULT_TEXTS = {
         "admin_cancel_order": "Hủy đơn này",
         "admin_binance_req": "Yêu cầu xác nhận Binance",
         "admin_binance_topup_req": "Yêu cầu xác nhận nạp ví Binance",
+        # Lang
         "lang_changed": "Đã đổi ngôn ngữ: Tiếng Việt",
         "lang_choose": "Chọn ngôn ngữ để tiếp tục:",
         "lang_required": "Vui lòng chọn ngôn ngữ trước khi tiếp tục:",
         "btn_lang_vi": "Tiếng Việt", "btn_lang_en": "English",
+        # Email flow
         "youtube_email_ask": "Vui lòng gửi email của bạn cho bot để admin thêm vào team.\n\nVí dụ: yourname@gmail.com",
         "youtube_email_preview": "Email của bạn: <code>{email}</code>\n\nNhấn nút bên dưới để <b>xác nhận gửi email này cho admin</b>.",
         "youtube_email_btn_confirm_send": "Xác nhận gửi cho admin",
@@ -225,6 +285,7 @@ DEFAULT_TEXTS = {
         "admin_email_request_title": "Yêu cầu thêm vào team",
         "admin_email_confirm_btn": "Đã thêm vào team",
         "admin_email_confirmed": "[ĐÃ XÁC NHẬN]",
+        # Wallet
         "wallet_title": "Ví của bạn", "wallet_balance": "Số dư",
         "wallet_topup_prompt": "Nhập số tiền muốn nạp (VND). Tối thiểu 2,000.",
         "wallet_topup_invalid": "Số tiền không hợp lệ. Tối thiểu 2,000 VND.",
@@ -232,10 +293,12 @@ DEFAULT_TEXTS = {
         "wallet_topup_success": "Nạp ví thành công!\n\nSố tiền: <b>{amount:,} VND</b>\nSố dư mới: <b>{balance:,} VND</b>",
         "wallet_not_enough": "Số dư không đủ. Vui lòng nạp thêm ví.",
         "wallet_paid_success": "Đã thanh toán bằng ví!\n\nĐã trừ: <b>{amount:,} VND</b>\nSố dư còn: <b>{balance:,} VND</b>",
+        # Admin
         "admin_users_title": "Danh sách người dùng",
         "admin_topups_title": "Danh sách users đã nạp ví",
         "admin_user_detail": "Chi tiết người dùng",
         "admin_user_topup_history": "Lịch sử nạp ví",
+        # Notification
         "notify_title": "THÔNG BÁO TỪ HỆ THỐNG",
         "notify_line": "━━━━━━━━━━━━━━━━",
         "notify_body": "Kho hàng vừa được cập nhật thêm Sản phẩm mới!\n\nDanh mục: {category}\nSản phẩm: {product}\nSố lượng thêm: {qty} sản phẩm\n\nMọi người nhanh tay truy cập bot để mua nhé, số lượng có hạn!",
@@ -268,6 +331,50 @@ DEFAULT_TEXTS = {
         "btn_wallet": "My wallet", "btn_topup": "Top up",
         "btn_pay_wallet": "Pay with wallet",
         "btn_topup_payos": "Topup via PayOS", "btn_topup_binance": "Topup via Binance",
+        "menu_title": "WELCOME {name} TO SHOP",
+        "menu_prompt": "Choose function below",
+        "menu_shop": "Shop",
+        "menu_account": "Account",
+        "menu_history_buy": "Purchase history",
+        "menu_history_topup": "Topup history",
+        "menu_wallet": "My wallet",
+        "menu_topup_bank": "Bank topup",
+        "menu_top": "Top depositors",
+        "menu_download": "Hack file / IPA",
+        "menu_help": "Support",
+        "menu_channel_label": "Channel",
+        "menu_admin_label": "Admin",
+        "menu_balance_label": "Balance",
+        "menu_total_topup_label": "Total topped up",
+        "account_title": "ACCOUNT INFORMATION",
+        "account_id": "ID",
+        "account_username": "Username",
+        "account_name": "Name",
+        "account_registered": "Registered",
+        "account_balance": "Balance",
+        "account_total_topup": "Total topped up",
+        "account_total_spent": "Total spent",
+        "account_total_orders": "Orders",
+        "account_lang": "Language",
+        "top_title": "TOP DEPOSITORS",
+        "top_empty": "No one has topped up yet.",
+        "top_row": "{rank}. {name} — {amount}đ",
+        "top_your_rank": "Your rank: #{rank} ({amount}đ)",
+        "top_your_none": "You are not in the leaderboard.",
+        "download_title": "DOWNLOAD LINKS / HACK FILES",
+        "download_empty": "Admin has not configured download links.",
+        "download_repo_btn": "Repo link",
+        "download_ipa_btn": "Download IPA",
+        "download_other_btn": "Other file",
+        "download_note": "Press the buttons below to open the links.",
+        "wallet_history": "Topup history",
+        "wallet_history_title": "TOPUP HISTORY",
+        "wallet_history_empty": "You have no topup transactions.",
+        "wallet_history_row": "{icon} <code>#{code}</code> — {amount}đ — {date}",
+        "wallet_history_total": "Total topped up: {total}đ",
+        "wallet_history_status_paid": "OK",
+        "wallet_history_status_pending": "...",
+        "wallet_history_status_cancelled": "X",
         "refreshed": "Refreshed",
         "not_found": "Product not found.",
         "out_of_stock": "Out of stock.",
@@ -399,6 +506,11 @@ TEXT_EMOJI_KEYS = {
     "binance_sent": "Thông báo user đã chuyển khoản",
     "notify_title": "Tiêu đề thông báo hệ thống",
     "notify_body": "Nội dung thông báo kho",
+    "menu_title": "Tiêu đề menu chính",
+    "top_title": "Tiêu đề top nạp tiền",
+    "account_title": "Tiêu đề tài khoản",
+    "download_title": "Tiêu đề link tải",
+    "wallet_history_title": "Tiêu đề lịch sử nạp",
 }
 
 
@@ -458,7 +570,6 @@ async def safe_send(bot, chat_id, text, **kw):
 
 
 async def _send_chunks(message, header, lines, chunk_size=3500):
-    """Gửi list lines thành nhiều message, không vượt 4096 char."""
     buf = (header + "\n") if header else ""
     for line in lines:
         if len(buf) + len(line) + 1 > chunk_size:
@@ -506,6 +617,21 @@ UI_KEYS = {
     "admin_recv_key": "Nút admin nhận tiền giao key",
     "admin_recv_topup": "Nút admin nhận USDT cộng ví",
     "admin_cancel": "Nút admin hủy đơn",
+    # Menu
+    "menu_shop": "Nút Cửa hàng",
+    "menu_account": "Nút Tài khoản",
+    "menu_history_buy": "Nút Lịch sử mua",
+    "menu_history_topup": "Nút Lịch sử nạp",
+    "menu_wallet": "Nút Ví của tôi",
+    "menu_topup_bank": "Nút Nạp bank",
+    "menu_top": "Nút Top nạp tiền",
+    "menu_download": "Nút Tải File Hack",
+    "menu_help": "Nút Hỗ trợ",
+    "menu_back": "Nút về menu chính",
+    "top_medal": "Biểu tượng top",
+    "download_repo": "Nút Link Repo",
+    "download_ipa": "Nút Tải IPA",
+    "download_other": "Nút File khác",
 }
 
 
@@ -598,8 +724,37 @@ def product_buttons(products, page=0, per_page=5, uid=None):
         button(t(uid, "btn_orders"), callback_data="my_orders", ui_key="orders"),
         button(t(uid, "btn_wallet"), callback_data="wallet", ui_key="wallet"),
     ])
-    kb.append([button(t(uid, "btn_lang"), callback_data="menu_lang", ui_key="lang")])
+    kb.append([
+        button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back"),
+        button(t(uid, "btn_lang"), callback_data="menu_lang", ui_key="lang"),
+    ])
     return InlineKeyboardMarkup(kb)
+
+
+def main_menu_buttons(uid=None):
+    """Menu chính dạng grid 2 cột giống layout shop game."""
+    return InlineKeyboardMarkup([
+        [
+            button(t(uid, "menu_account"), callback_data="menu_account", ui_key="menu_account"),
+            button(t(uid, "menu_shop"), callback_data="menu_shop", ui_key="menu_shop"),
+        ],
+        [
+            button(t(uid, "menu_topup_bank"), callback_data="menu_topup_bank", ui_key="menu_topup_bank"),
+            button(t(uid, "menu_wallet"), callback_data="menu_wallet", ui_key="menu_wallet"),
+        ],
+        [
+            button(t(uid, "menu_download"), callback_data="menu_download", ui_key="menu_download"),
+            button(t(uid, "menu_history_buy"), callback_data="menu_history_buy", ui_key="menu_history_buy"),
+        ],
+        [
+            button(t(uid, "menu_top"), callback_data="menu_top", ui_key="menu_top"),
+            button(t(uid, "menu_history_topup"), callback_data="menu_history_topup", ui_key="menu_history_topup"),
+        ],
+        [
+            button(t(uid, "btn_lang"), callback_data="menu_lang", ui_key="lang"),
+            button(t(uid, "menu_help"), callback_data="menu_help", ui_key="menu_help"),
+        ],
+    ])
 
 
 def order_buttons(order_id, uid=None):
@@ -697,7 +852,6 @@ async def check_email_block(query, uid):
 
 
 async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
-    """Gửi thông báo tới toàn bộ user khi có hàng mới. Trả về (sent, fail)."""
     if get_text("auto_broadcast", "true").strip().lower() != "true":
         logger.info("broadcast_new_stock: auto_broadcast OFF, skip")
         return 0, 0
@@ -725,6 +879,37 @@ async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
     return sent, fail
 
 
+def _build_main_menu_text(user):
+    """Tạo nội dung menu chính giống layout shop game."""
+    uid = user.id
+    first = user.first_name or "bạn"
+    mention = f"@{user.username}" if user.username else first
+    bal = get_user_balance(uid)
+    total_topup = get_total_topup_amount(uid)
+    ch = get_text("cfg_channel", "@your_channel")
+    ad = get_text("cfg_admin", "@your_admin")
+    title = t(uid, "menu_title", name=mention)
+    body = (
+        f"🚀 <b>{html.escape(title)}</b>\n\n"
+        f"📢 <b>{html.escape(t(uid, 'menu_channel_label'))}:</b> {html.escape(ch)}\n"
+        f"👤 <b>{html.escape(t(uid, 'menu_admin_label'))}:</b> {html.escape(ad)}\n\n"
+        f"💰 <b>{html.escape(t(uid, 'menu_total_topup_label'))}:</b> {total_topup:,}đ\n"
+        f"💵 <b>{html.escape(t(uid, 'menu_balance_label'))}:</b> {bal:,}đ\n\n"
+        f"👉 {html.escape(t(uid, 'menu_prompt'))}"
+    )
+    return body
+
+
+async def show_main_menu_via_message(message, user):
+    text = _build_main_menu_text(user)
+    await safe_reply(message, text, reply_markup=main_menu_buttons(uid=user.id))
+
+
+async def show_main_menu_via_query(query, user):
+    text = _build_main_menu_text(user)
+    await safe_edit(query, text, reply_markup=main_menu_buttons(uid=user.id))
+
+
 # ============================================================
 # USER HANDLERS
 # ============================================================
@@ -735,16 +920,7 @@ async def start(update, context):
         await safe_reply(update.message, t_html(user.id, "lang_required"),
                          reply_markup=lang_buttons(uid=user.id))
         return
-    prods = list_products(limit=5, offset=0)
-    if not prods:
-        await safe_reply(update.message, t_html(user.id, "shop_empty"))
-        return
-    ui_icon = ui_emoji_html("shop")
-    title_body = t_html(user.id, "shop_title")
-    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
-    await safe_reply(update.message,
-                     f"{title_html}\n\n{t_html(user.id, 'shop_prompt')}",
-                     reply_markup=product_buttons(prods, page=0, uid=user.id))
+    await show_main_menu_via_message(update.message, user)
 
 
 async def lang_cmd(update, context):
@@ -761,15 +937,14 @@ async def setlang_callback(update, context):
         return
     uid = query.from_user.id
     set_user_lang(uid, lang)
-    prods = list_products(limit=5, offset=0)
-    if not prods:
-        await safe_edit(query, t_html(uid, "shop_empty"))
-        return
-    ui_icon = ui_emoji_html("shop")
-    title_body = t_html(uid, "shop_title")
-    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
-    await safe_edit(query, f"{title_html}\n\n{t_html(uid, 'shop_prompt')}",
-                    reply_markup=product_buttons(prods, page=0, uid=uid))
+    await show_main_menu_via_query(query, query.from_user)
+
+
+async def menu_callback(update, context):
+    """Về menu chính."""
+    query = update.callback_query
+    await query.answer()
+    await show_main_menu_via_query(query, query.from_user)
 
 
 async def menu_lang_callback(update, context):
@@ -779,11 +954,209 @@ async def menu_lang_callback(update, context):
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_lang_vi"), callback_data="setlang_vi", ui_key="lang")],
         [button(t(uid, "btn_lang_en"), callback_data="setlang_en", ui_key="lang")],
-        [button(t(uid, "btn_back"), callback_data="back_list", ui_key="back")],
+        [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
     ])
     await safe_edit(query, t_html(uid, "lang_choose"), reply_markup=kb)
 
 
+async def menu_shop_callback(update, context):
+    """Mở cửa hàng từ menu chính."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    prods = list_products(limit=5, offset=0)
+    if not prods:
+        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
+        await safe_edit(query, t_html(uid, "shop_empty"), reply_markup=kb)
+        return
+    ui_icon = ui_emoji_html("shop")
+    title_body = t_html(uid, "shop_title")
+    title_html = f"{ui_icon} <b>{title_body}</b>" if ui_icon else f"<b>{title_body}</b>"
+    await safe_edit(query, f"{title_html}\n\n{t_html(uid, 'shop_prompt')}",
+                    reply_markup=product_buttons(prods, page=0, uid=uid))
+
+
+async def menu_account_callback(update, context):
+    """Xem thông tin tài khoản."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    u = get_user_detail(uid) or {}
+    bal = get_user_balance(uid)
+    total_topup = get_total_topup_amount(uid)
+    total_spent = get_user_total_spent(uid)
+    n_orders = count_user_orders(uid)
+    reg = u.get("registered_at")
+    reg_str = reg.strftime("%Y-%m-%d %H:%M") if reg else "?"
+    username = u.get("username") or "—"
+    first = u.get("first_name") or ""
+    last = u.get("last_name") or ""
+    full_name = f"{first} {last}".strip() or "?"
+    lang = u.get("lang", "vi")
+    title_prefix = text_emoji_html("account_title")
+    text = (
+        f"{title_prefix}<b>{html.escape(t(uid, 'account_title'))}</b>\n\n"
+        f"🆔 <b>{html.escape(t(uid, 'account_id'))}:</b> <code>{uid}</code>\n"
+        f"👤 <b>{html.escape(t(uid, 'account_username'))}:</b> @{html.escape(str(username))}\n"
+        f"📝 <b>{html.escape(t(uid, 'account_name'))}:</b> {html.escape(full_name)}\n"
+        f"📅 <b>{html.escape(t(uid, 'account_registered'))}:</b> {reg_str}\n"
+        f"🌐 <b>{html.escape(t(uid, 'account_lang'))}:</b> {lang}\n\n"
+        f"💰 <b>{html.escape(t(uid, 'account_balance'))}:</b> {bal:,}đ\n"
+        f"💳 <b>{html.escape(t(uid, 'account_total_topup'))}:</b> {total_topup:,}đ\n"
+        f"🛒 <b>{html.escape(t(uid, 'account_total_spent'))}:</b> {total_spent:,}đ\n"
+        f"📦 <b>{html.escape(t(uid, 'account_total_orders'))}:</b> {n_orders}"
+    )
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_wallet"), callback_data="menu_wallet", ui_key="wallet")],
+        [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
+    ])
+    await safe_edit(query, text, reply_markup=kb)
+
+
+async def menu_top_callback(update, context):
+    """Bảng xếp hạng top nạp tiền."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    top = get_top_depositors(limit=10)
+    title_prefix = text_emoji_html("top_title")
+    lines = [f"{title_prefix}<b>{html.escape(t(uid, 'top_title'))}</b>\n"]
+    if not top:
+        lines.append(f"<i>{html.escape(t(uid, 'top_empty'))}</i>")
+    else:
+        for i, r in enumerate(top, 1):
+            uinfo = get_user_detail(r["_id"]) or {}
+            uname = uinfo.get("username")
+            fname = uinfo.get("first_name") or ""
+            lname = uinfo.get("last_name") or ""
+            disp = f"@{uname}" if uname else (f"{fname} {lname}".strip() or f"user_{r['_id']}")
+            medal = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else f"{i}."
+            lines.append(
+                f"{medal} {html.escape(disp)} — <b>{r['total']:,}đ</b>"
+            )
+    # Rank của user hiện tại
+    rank, mytotal = get_user_topup_rank(uid)
+    lines.append("")
+    if rank > 0:
+        lines.append(f"<b>{html.escape(t(uid, 'top_your_rank', rank=rank, amount=f'{mytotal:,}'))}</b>")
+    else:
+        lines.append(f"<i>{html.escape(t(uid, 'top_your_none'))}</i>")
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
+    ])
+    await safe_edit(query, "\n".join(lines), reply_markup=kb)
+
+
+async def menu_download_callback(update, context):
+    """Link tải file hack / IPA / repo."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    repo = get_text("cfg_repo", "").strip()
+    ipa = get_text("cfg_ipa", "").strip()
+    other = get_text("cfg_other", "").strip()
+    title_prefix = text_emoji_html("download_title")
+    lines = [f"{title_prefix}<b>{html.escape(t(uid, 'download_title'))}</b>\n"]
+    if not (repo or ipa or other):
+        lines.append(f"<i>{html.escape(t(uid, 'download_empty'))}</i>")
+    else:
+        lines.append(html.escape(t(uid, "download_note")))
+    rows = []
+    if repo:
+        rows.append([button(t(uid, "download_repo_btn"), url=repo, ui_key="download_repo")])
+    if ipa:
+        rows.append([button(t(uid, "download_ipa_btn"), url=ipa, ui_key="download_ipa")])
+    if other:
+        # other có thể là URL hoặc text tự do
+        if other.startswith("http://") or other.startswith("https://"):
+            rows.append([button(t(uid, "download_other_btn"), url=other, ui_key="download_other")])
+        else:
+            lines.append(f"\n📂 <b>{html.escape(t(uid, 'download_other_btn'))}:</b>\n<code>{html.escape(other)}</code>")
+    rows.append([button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")])
+    await safe_edit(query, "\n".join(lines), reply_markup=InlineKeyboardMarkup(rows),
+                    disable_web_page_preview=True)
+
+
+async def menu_topup_bank_callback(update, context):
+    """Chuyển thẳng user tới flow nạp tiền (prompt nhập số tiền)."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    context.user_data["topup_state"] = True
+    kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
+    await safe_edit(query,
+                    f"<b>{html.escape(t(uid, 'wallet_topup_prompt'))}</b>\n\n<i>Vi du: 50000</i>",
+                    reply_markup=kb)
+
+
+async def menu_wallet_callback(update, context):
+    """Ví user (từ menu chính)."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    await _show_wallet(query, uid)
+
+
+async def _show_wallet(query, uid):
+    bal = get_user_balance(uid)
+    text = (f"{ui_emoji_html('wallet')} <b>{html.escape(t(uid, 'wallet_title'))}</b>\n\n"
+            f"<b>{html.escape(t(uid, 'wallet_balance'))}:</b> {bal:,} VND")
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_topup"), callback_data="topup", ui_key="topup")],
+        [button(t(uid, "wallet_history"), callback_data="wallet_history", ui_key="menu_history_topup")],
+        [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
+    ])
+    await safe_edit(query, text, reply_markup=kb)
+
+
+async def menu_history_buy_callback(update, context):
+    """Lịch sử mua (từ menu chính) — chuyển tới my_orders."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    await _render_orders_list(query, uid)
+
+
+async def menu_history_topup_callback(update, context):
+    """Lịch sử nạp tiền (từ menu chính)."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    await _render_topup_history(query, uid)
+
+
+async def menu_help_callback(update, context):
+    """Hỗ trợ / liên hệ admin."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    ad = get_text("cfg_admin", "@your_admin")
+    ch = get_text("cfg_channel", "@your_channel")
+    text = (
+        f"🆘 <b>Hỗ trợ</b>\n\n"
+        f"📢 <b>Kênh thông báo:</b> {html.escape(ch)}\n"
+        f"👤 <b>Admin:</b> {html.escape(ad)}\n\n"
+        f"Vui lòng liên hệ admin nếu gặp vấn đề với đơn hàng hoặc nạp ví."
+    )
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
+    ])
+    await safe_edit(query, text, reply_markup=kb)
+
+
+# ============================================================
+# SHOP: refresh / list / detail / buy
+# ============================================================
 async def refresh_products_callback(update, context):
     query = update.callback_query
     uid = query.from_user.id
@@ -820,7 +1193,8 @@ async def list_products_callback(update, context):
             page = 0
     prods = list_products(limit=5, offset=page * 5)
     if not prods:
-        await safe_edit(query, t_html(uid, "no_more"), reply_markup=None)
+        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
+        await safe_edit(query, t_html(uid, "no_more"), reply_markup=kb)
         return
     await safe_edit(query, f"<b>{html.escape(t(uid, 'list_title', page=page + 1))}</b>",
                     reply_markup=product_buttons(prods, page, uid=uid))
@@ -1059,7 +1433,7 @@ async def check_order(update, context):
                 await safe_edit(query, t_html(uid, "youtube_email_done",
                                               email=html.escape(order.get("customer_email") or "")))
                 return
-        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
         await safe_edit(query,
             f"{t_html(uid, 'order_paid')}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
@@ -1078,7 +1452,7 @@ async def check_order(update, context):
             key = get_available_key(order["product_id"])
             if key:
                 update_order_status(order_code, "paid", key)
-                kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+                kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
                 await safe_edit(query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
@@ -1117,7 +1491,7 @@ async def cancel_order(update, context):
             key = get_available_key(order["product_id"])
             if key:
                 update_order_status(order_code, "paid", key)
-                kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+                kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
                 await safe_edit(query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
@@ -1129,7 +1503,7 @@ async def cancel_order(update, context):
     update_order_status(order_code, "cancelled")
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_orders"), callback_data="my_orders", ui_key="orders")],
-        [button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")],
+        [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
     ])
     await safe_edit(query,
         f"{t_html(uid, 'order_cancelled_ok')} #{order_code}.\n\n"
@@ -1140,16 +1514,13 @@ async def cancel_order(update, context):
 # ============================================================
 # ĐƠN HÀNG CHỜ
 # ============================================================
-async def my_orders(update, context):
-    query = update.callback_query
-    await query.answer()
-    uid = query.from_user.id
-    if await check_email_block(query, uid):
-        return
+async def _render_orders_list(query, uid):
     orders = get_recent_orders_by_user(uid, hours=24)
     order_icon = ui_emoji_html("order")
     if not orders:
-        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+        kb = InlineKeyboardMarkup([
+            [button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")],
+        ])
         await safe_edit(query, t_html(uid, "pending_empty"), reply_markup=kb)
         return
     product_ids = list({o["product_id"] for o in orders})
@@ -1180,8 +1551,17 @@ async def my_orders(update, context):
                 f"{t(uid, 'btn_hide_order')} #{short_code}",
                 callback_data=f"hide_order_{o['id']}")])
     text += f"\n<i>{html.escape(t(uid, 'pending_hint'))}</i>"
-    kb_rows.append([button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")])
+    kb_rows.append([button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")])
     await safe_edit(query, text, reply_markup=InlineKeyboardMarkup(kb_rows))
+
+
+async def my_orders(update, context):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    await _render_orders_list(query, uid)
 
 
 async def delete_pending_order_callback(update, context):
@@ -1215,7 +1595,7 @@ async def delete_pending_order_callback(update, context):
             if key:
                 update_order_status(oc, "paid", key)
                 await query.answer(t(uid, "order_recheck_paid"), show_alert=True)
-                kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+                kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
                 await safe_edit(query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
@@ -1226,7 +1606,7 @@ async def delete_pending_order_callback(update, context):
         return
     update_order_status(oc, "cancelled")
     await query.answer(t(uid, "order_cancelled_ok"), show_alert=False)
-    await my_orders(update, context)
+    await _render_orders_list(query, uid)
 
 
 async def recheck_cancelled_order_callback(update, context):
@@ -1243,7 +1623,7 @@ async def recheck_cancelled_order_callback(update, context):
         return
     if order["status"] == "paid":
         await query.answer("Don da thanh toan", show_alert=True)
-        await my_orders(update, context)
+        await _render_orders_list(query, uid)
         return
     data = get_payment_status(order_code)
     paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
@@ -1265,7 +1645,7 @@ async def recheck_cancelled_order_callback(update, context):
             return
         restore_cancelled_order(order_code, key_assigned=key)
         await query.answer(t(uid, "order_recheck_paid"), show_alert=True)
-        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
         await safe_edit(query,
             f"{t_html(uid, 'order_success')}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
@@ -1290,7 +1670,7 @@ async def hide_order_callback(update, context):
         return
     hide_order(oc, uid)
     await query.answer("Da an don", show_alert=False)
-    await my_orders(update, context)
+    await _render_orders_list(query, uid)
 
 
 # ============================================================
@@ -1302,14 +1682,49 @@ async def wallet_callback(update, context):
     uid = query.from_user.id
     if await check_email_block(query, uid):
         return
-    bal = get_user_balance(uid)
-    text = (f"{ui_emoji_html('wallet')} <b>{html.escape(t(uid, 'wallet_title'))}</b>\n\n"
-            f"<b>{html.escape(t(uid, 'wallet_balance'))}:</b> {bal:,} VND")
+    await _show_wallet(query, uid)
+
+
+async def wallet_history_callback(update, context):
+    """Lịch sử nạp tiền (từ trong ví)."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    if await check_email_block(query, uid):
+        return
+    await _render_topup_history(query, uid, back_cb="wallet")
+
+
+async def _render_topup_history(query, uid, back_cb="menu"):
+    history = get_user_topup_orders(uid, limit=20)
+    total = get_total_topup_amount(uid)
+    title_prefix = text_emoji_html("wallet_history_title")
+    lines = [f"{title_prefix}<b>{html.escape(t(uid, 'wallet_history_title'))}</b>\n"]
+    if not history:
+        lines.append(f"<i>{html.escape(t(uid, 'wallet_history_empty'))}</i>")
+    else:
+        for h in history:
+            oc = h.get("order_code", "?")
+            amt = h.get("amount", 0)
+            st = h.get("status", "?")
+            created = h.get("created_at")
+            dt = created.strftime("%d/%m %H:%M") if created else "?"
+            if st == "paid":
+                icon = "✅"
+            elif st == "cancelled":
+                icon = "❌"
+            else:
+                icon = "⏳"
+            lines.append(
+                t(uid, "wallet_history_row", icon=icon, code=oc, amount=f"{amt:,}", date=dt)
+            )
+        lines.append("")
+        lines.append(f"<b>{html.escape(t(uid, 'wallet_history_total', total=f'{total:,}'))}</b>")
     kb = InlineKeyboardMarkup([
-        [button(t(uid, "btn_topup"), callback_data="topup", ui_key="topup")],
-        [button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")],
+        [button(t(uid, "btn_back_menu" if back_cb == "menu" else "btn_back"),
+                callback_data=back_cb, ui_key="menu_back" if back_cb == "menu" else "back")],
     ])
-    await safe_edit(query, text, reply_markup=kb)
+    await safe_edit(query, "\n".join(lines), reply_markup=kb)
 
 
 async def topup_callback(update, context):
@@ -1380,7 +1795,6 @@ async def topup_payos_callback(update, context):
     await safe_edit(query, text, reply_markup=kb, disable_web_page_preview=True)
 
 
-# ===== FIX BINANCE TOPUP =====
 async def topup_binance_callback(update, context):
     query = update.callback_query
     await query.answer()
@@ -1415,7 +1829,6 @@ async def topup_binance_callback(update, context):
 
 
 async def topup_binance_sent_callback(update, context):
-    """User báo đã chuyển USDT → gửi admin kèm nút xác nhận."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1456,7 +1869,6 @@ async def topup_binance_sent_callback(update, context):
 
 
 async def confirm_binance_topup_callback(update, context):
-    """Admin bấm 'Đã nhận USDT' → cộng tiền vào ví user."""
     query = update.callback_query
     admin_uid = query.from_user.id
     if admin_uid not in Config.ADMIN_IDS:
@@ -1492,9 +1904,6 @@ async def confirm_binance_topup_callback(update, context):
                                amount=order["amount"], balance=new_bal))
     except Exception as e:
         logger.error(f"notify user: {e}")
-
-
-# ===== END FIX BINANCE TOPUP =====
 
 
 async def topup_check_callback(update, context):
@@ -1574,7 +1983,7 @@ async def pay_wallet_callback(update, context):
             return
         update_order_status(order_code, "paid", key)
         new_bal = get_user_balance(uid)
-        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_shop"), callback_data="back_list", ui_key="back")]])
+        kb = InlineKeyboardMarkup([[button(t(uid, "btn_back_menu"), callback_data="menu", ui_key="menu_back")]])
         await safe_edit(query,
             f"{t_html(uid, 'wallet_paid_success', amount=order['amount'], balance=new_bal)}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
@@ -1678,7 +2087,6 @@ async def confirm_email_callback(update, context):
 
 
 async def confirm_binance_callback(update, context):
-    """Admin bấm xác nhận đơn Binance sản phẩm → giao key."""
     query = update.callback_query
     admin_uid = query.from_user.id
     if admin_uid not in Config.ADMIN_IDS:
@@ -1815,13 +2223,9 @@ async def admin_add_product(update, context):
             f"Ton kho: {stock}\n"
             f"Keys: {len(keys)}{emoji_info}{emoji_note}\n\n"
             f"<i>Bat email flow: <code>/setflow {pid} email</code></i>")
-        # Auto broadcast
         if stock > 0:
             asyncio.create_task(broadcast_new_stock(
-                context.bot,
-                {"name": name},
-                stock,
-                category="Sản phẩm mới"
+                context.bot, {"name": name}, stock, category="Sản phẩm mới"
             ))
     except Exception as e:
         logger.error(f"add: {e}", exc_info=True)
@@ -1899,17 +2303,13 @@ async def admin_import_products(update, context):
         for ln, err in fail[:10]:
             rpt += f"Dong {ln}: {html.escape(err)}\n"
     await safe_reply(update.message, rpt)
-    # Auto broadcast
     if ok:
         total_qty = sum(x[3] for x in ok)
         names = ", ".join(x[1] for x in ok[:3])
         if len(ok) > 3:
             names += f" ... (+{len(ok)-3})"
         asyncio.create_task(broadcast_new_stock(
-            context.bot,
-            {"name": names},
-            total_qty,
-            category="Nhập hàng loạt"
+            context.bot, {"name": names}, total_qty, category="Nhập hàng loạt"
         ))
 
 
@@ -1934,10 +2334,7 @@ async def admin_add_key(update, context):
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}})
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
         asyncio.create_task(broadcast_new_stock(
-            context.bot,
-            {"name": p["name"]},
-            len(new_keys),
-            category="Nhập thêm key"
+            context.bot, {"name": p["name"]}, len(new_keys), category="Nhập thêm key"
         ))
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -2144,13 +2541,12 @@ async def admin_broadcast(update, context):
             await safe_send(context.bot, uid, msg, disable_web_page_preview=True)
             sent += 1
             await asyncio.sleep(0.05)
-        except Exception as e:
+        except Exception:
             fail += 1
     await safe_reply(update.message, f"Broadcast xong. OK {sent} | FAIL {fail}")
 
 
 async def admin_notify(update, context):
-    """Admin gửi thủ công: /notify <product_id> <qty> [category]"""
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     parts = update.message.text.split(maxsplit=3)
@@ -2175,7 +2571,6 @@ async def admin_notify(update, context):
         await safe_reply(update.message, t_html(0, "notify_no_users"))
         return
     msg_wait = await safe_reply(update.message, t_html(0, "notify_running"))
-    # Force send (bypass auto_broadcast flag)
     title_prefix = text_emoji_html("notify_title")
     title = t(0, "notify_title")
     line = t(0, "notify_line")
@@ -2196,7 +2591,6 @@ async def admin_notify(update, context):
 
 
 async def admin_toggle_notify(update, context):
-    """Bật/tắt tự động thông báo kho."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     cur = get_text("auto_broadcast", "true").strip().lower()
@@ -2204,6 +2598,59 @@ async def admin_toggle_notify(update, context):
     set_text("auto_broadcast", new)
     key = "notify_toggled_on" if new == "true" else "notify_toggled_off"
     await safe_reply(update.message, t_html(0, key))
+
+
+# ============================================================
+# ADMIN - SETCONFIG (kênh, admin, download links)
+# ============================================================
+CONFIG_KEYS = {
+    "channel": "cfg_channel",
+    "admin": "cfg_admin",
+    "repo": "cfg_repo",
+    "ipa": "cfg_ipa",
+    "other": "cfg_other",
+}
+
+
+async def admin_setconfig(update, context):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    try:
+        parts = update.message.text.split(maxsplit=2)
+        if len(parts) < 3:
+            txt = ("<b>Cú pháp:</b> <code>/setconfig &lt;key&gt; &lt;value&gt;</code>\n\n"
+                   "<b>Keys:</b>\n"
+                   "- <code>channel</code> - Kênh thông báo (vd: @mychannel)\n"
+                   "- <code>admin</code> - Username admin (vd: @myadmin)\n"
+                   "- <code>repo</code> - Link Repo (URL)\n"
+                   "- <code>ipa</code> - Link tải IPA (URL)\n"
+                   "- <code>other</code> - Link/text file khác\n\n"
+                   "<b>Xem cấu hình:</b> <code>/viewconfig</code>")
+            await safe_reply(update.message, txt)
+            return
+        key = parts[1].lower().strip()
+        value = parts[2].strip()
+        if key not in CONFIG_KEYS:
+            await safe_reply(update.message, f"Key lỗi: <code>{html.escape(key)}</code>")
+            return
+        set_text(CONFIG_KEYS[key], value)
+        await safe_reply(update.message, f"Đã set <b>{key}</b> = <code>{html.escape(value[:80])}</code>")
+    except Exception as e:
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
+
+
+async def admin_viewconfig(update, context):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    try:
+        rows = []
+        for k, dbkey in CONFIG_KEYS.items():
+            v = get_text(dbkey, "")
+            rows.append(f"- <code>{k}</code>: <code>{html.escape(v) if v else '(chua set)'}</code>")
+        txt = "<b>CẤU HÌNH MENU</b>\n\n" + "\n".join(rows)
+        await safe_reply(update.message, txt)
+    except Exception as e:
+        await safe_reply(update.message, f"Lỗi: {html.escape(str(e))}")
 
 
 # ============================================================
@@ -2279,6 +2726,8 @@ async def admin_user_detail_cmd(update, context):
     reg = u.get("registered_at")
     reg_str = reg.strftime("%Y-%m-%d %H:%M") if reg else "?"
     total_topup = get_total_topup_amount(target_id)
+    total_spent = get_user_total_spent(target_id)
+    n_orders = count_user_orders(target_id)
     topup_history = get_user_topup_orders(target_id, limit=10)
     text = (f"<b>{html.escape(t(0, 'admin_user_detail'))}</b>\n\n"
             f"- ID: <code>{target_id}</code>\n"
@@ -2287,7 +2736,9 @@ async def admin_user_detail_cmd(update, context):
             f"- Ngon ngu: <b>{u.get('lang', 'vi')}</b>\n"
             f"- Ngay DK: {reg_str}\n"
             f"- So du vi: <b>{bal:,} VND</b>\n"
-            f"- Tong da nap: <b>{total_topup:,} VND</b>\n\n")
+            f"- Tong da nap: <b>{total_topup:,} VND</b>\n"
+            f"- Tong da chi: <b>{total_spent:,} VND</b>\n"
+            f"- Don da mua: <b>{n_orders}</b>\n\n")
     if topup_history:
         text += f"<b>{html.escape(t(0, 'admin_user_topup_history'))}:</b>\n"
         for h in topup_history:
@@ -2406,10 +2857,10 @@ async def admin_setui_force(update, context):
         key = parts[1].lower()
         setting_key, _ = _resolve_setui_key(key)
         if not setting_key:
-            await safe_reply(update.message, "Key loi.")
+           t await safe_reply(update.message, "Key_ loi.")
             return
-        set_setting(setting_key, emoji_id)
-        await safe_reply(update.message, f"Ep luu emoji cho <code>{key}</code>.")
+        set_setting(set["ting_key, emoji_id)
+        await safe_reply(update.message, f"Ep lukeyu emoji cho <code>{key}</code>.")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
@@ -2419,21 +2870,14 @@ async def admin_viewui(update, context):
         return
     try:
         st = {s["key"]: s.get("emoji_id") for s in get_all_settings()}
-
         ui_lines = []
         for k, desc in UI_KEYS.items():
             eid = st.get(f"ui_{k}")
-            ui_lines.append(
-                f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>")
-            )
-
+            ui_lines.append(f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>"))
         text_lines = []
         for k, desc in TEXT_EMOJI_KEYS.items():
             eid = st.get(f"text_{k}")
-            text_lines.append(
-                f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>")
-            )
-
+            text_lines.append(f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>"))
         await _send_chunks(update.message, "<b>UI Emoji:</b>", ui_lines)
         await _send_chunks(update.message, "<b>Text Emoji:</b>", text_lines)
     except Exception as e:
@@ -2501,6 +2945,11 @@ TEXT_KEYS_INFO = {
     "admin_binance_topup_req": "Tieu de yeu cau xac nhan nap Binance",
     "notify_title": "Tieu de thong bao he thong",
     "notify_body": "Noi dung thong bao kho (co {category}, {product}, {qty})",
+    "menu_title": "Tieu de menu chinh (co {name})",
+    "top_title": "Tieu de top nap tien",
+    "account_title": "Tieu de tai khoan",
+    "download_title": "Tieu de link tai",
+    "wallet_history_title": "Tieu de lich su nap",
 }
 
 
@@ -2530,7 +2979,7 @@ async def admin_viewtext(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     try:
-        ov = {t_["key"]: t_["value"] for t_ in get_all_texts()}
+        ov = {"]: t_["value"] for t_ in get_all_texts()}
         if not ov:
             await safe_reply(update.message, "<b>Texts override:</b>\n\n<i>Chua co override.</i>")
             return
@@ -2650,6 +3099,13 @@ async def admin_help(update, context):
                "<code>/setemoji &lt;id&gt; [emoji]</code>\n"
                "<code>/list</code> / <code>/list2</code> / <code>/detail &lt;id&gt;</code>\n"
                "<code>/del &lt;id&gt;</code> / <code>/delall confirm</code>\n\n"
+               "<b>Cấu hình menu:</b>\n"
+               "<code>/setconfig channel @channel</code>\n"
+               "<code>/setconfig admin @admin</code>\n"
+               "<code>/setconfig repo &lt;url&gt;</code>\n"
+               "<code>/setconfig ipa &lt;url&gt;</code>\n"
+               "<code>/setconfig other &lt;url|text&gt;</code>\n"
+               "<code>/viewconfig</code>\n\n"
                "<b>Users:</b>\n"
                "<code>/users [page]</code>\n"
                "<code>/user &lt;id&gt;</code>\n"
@@ -2812,6 +3268,7 @@ async def main():
     # User
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("lang", lang_cmd))
+    app.add_handler(CommandHandler("menu", menu_callback))
 
     # Admin products
     app.add_handler(CommandHandler("add", admin_add_product))
@@ -2831,6 +3288,10 @@ async def main():
     app.add_handler(CommandHandler("viewbinance", admin_viewbinance))
     app.add_handler(CommandHandler("refreshrate", admin_refreshrate))
     app.add_handler(CommandHandler("confirm", admin_confirm_order))
+
+    # Admin config
+    app.add_handler(CommandHandler("setconfig", admin_setconfig))
+    app.add_handler(CommandHandler("viewconfig", admin_viewconfig))
 
     # Admin misc
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
@@ -2874,30 +3335,53 @@ async def main():
     app.add_handler(CallbackQueryHandler(confirm_email_callback, pattern=r"^cfemail_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_binance_callback, pattern=r"^cfbinance_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_binance_topup_callback, pattern=r"^cfbinancetopup_\d+$"))
+
+    # Menu chính
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu$"))
+    app.add_handler(CallbackQueryHandler(menu_shop_callback, pattern=r"^menu_shop$"))
+    app.add_handler(CallbackQueryHandler(menu_account_callback, pattern=r"^menu_account$"))
+    app.add_handler(CallbackQueryHandler(menu_top_callback, pattern=r"^menu_top$"))
+    app.add_handler(CallbackQueryHandler(menu_download_callback, pattern=r"^menu_download$"))
+    app.add_handler(CallbackQueryHandler(menu_topup_bank_callback, pattern=r"^menu_topup_bank$"))
+    app.add_handler(CallbackQueryHandler(menu_wallet_callback, pattern=r"^menu_wallet$"))
+    app.add_handler(CallbackQueryHandler(menu_history_buy_callback, pattern=r"^menu_history_buy$"))
+    app.add_handler(CallbackQueryHandler(menu_history_topup_callback, pattern=r"^menu_history_topup$"))
+    app.add_handler(CallbackQueryHandler(menu_help_callback, pattern=r"^menu_help$"))
+
+    # Lang
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
-    app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
-    app.add_handler(CallbackQueryHandler(delete_pending_order_callback, pattern=r"^del_order_\d+$"))
-    app.add_handler(CallbackQueryHandler(recheck_cancelled_order_callback, pattern=r"^recheck_\d+$"))
-    app.add_handler(CallbackQueryHandler(hide_order_callback, pattern=r"^hide_order_\d+$"))
+
+    # Shop
+    app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^page_"))
     app.add_handler(CallbackQueryHandler(show_product_detail, pattern=r"^detail_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
-    app.add_handler(CallbackQueryHandler(pay_payos_callback, pattern=r"^pay_payos_"))
-    app.add_handler(CallbackQueryHandler(pay_binance_callback, pattern=r"^pay_binance_"))
-    app.add_handler(CallbackQueryHandler(binance_sent_callback, pattern=r"^binance_sent_"))
+    app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^back_list$"))
+
+    # Orders
+    app.add_handler(CallbackQueryHandler(my_orders, pattern=r"^my_orders$"))
+    app.add_handler(CallbackQueryHandler(delete_pending_order_callback, pattern=r"^del_order_\d+$"))
+    app.add_handler(CallbackQueryHandler(recheck_cancelled_order_callback, pattern=r"^recheck_\d+$"))
+    app.add_handler(CallbackQueryHandler(hide_order_callback, pattern=r"^hide_order_\d+$"))
     app.add_handler(CallbackQueryHandler(back_pay_callback, pattern=r"^backpay_"))
     app.add_handler(CallbackQueryHandler(check_order, pattern=r"^check_"))
     app.add_handler(CallbackQueryHandler(cancel_order, pattern=r"^cancel_"))
-    app.add_handler(CallbackQueryHandler(my_orders, pattern=r"^my_orders$"))
-    app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^back_list$"))
+
+    # Pay
+    app.add_handler(CallbackQueryHandler(pay_payos_callback, pattern=r"^pay_payos_"))
+    app.add_handler(CallbackQueryHandler(pay_binance_callback, pattern=r"^pay_binance_"))
+    app.add_handler(CallbackQueryHandler(binance_sent_callback, pattern=r"^binance_sent_"))
+    app.add_handler(CallbackQueryHandler(pay_wallet_callback, pattern=r"^pay_wallet_\d+$"))
+
+    # Wallet
     app.add_handler(CallbackQueryHandler(wallet_callback, pattern=r"^wallet$"))
+    app.add_handler(CallbackQueryHandler(wallet_history_callback, pattern=r"^wallet_history$"))
     app.add_handler(CallbackQueryHandler(topup_callback, pattern=r"^topup$"))
     app.add_handler(CallbackQueryHandler(topup_payos_callback, pattern=r"^topup_payos_\d+$"))
     app.add_handler(CallbackQueryHandler(topup_binance_callback, pattern=r"^topup_binance_\d+$"))
     app.add_handler(CallbackQueryHandler(topup_binance_sent_callback, pattern=r"^topup_binance_sent_\d+$"))
     app.add_handler(CallbackQueryHandler(topup_check_callback, pattern=r"^topup_check_\d+$"))
-    app.add_handler(CallbackQueryHandler(pay_wallet_callback, pattern=r"^pay_wallet_\d+$"))
 
     await app.initialize()
     await app.start()
