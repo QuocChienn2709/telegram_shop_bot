@@ -251,7 +251,6 @@ DEFAULT_TEXTS = {
         "notify_not_found": "Không tìm thấy sản phẩm.",
         "notify_no_users": "Không có user nào để gửi.",
         "notify_running": "Đang gửi thông báo...",
-        # ===== MAIN MENU =====
         "menu_welcome": "CHÀO MỪNG {user} ĐẾN VỚI SHOP",
         "menu_channel": "Kênh thông báo: {channel}",
         "menu_admin": "Admin: {admin}",
@@ -267,7 +266,6 @@ DEFAULT_TEXTS = {
         "btn_top_topup": "Top nạp tiền",
         "btn_language_menu": "Ngôn ngữ",
         "btn_menu_main": "Menu chính",
-        # ===== ACCOUNT VIEW =====
         "account_title": "TÀI KHOẢN CỦA BẠN",
         "account_id": "ID",
         "account_username": "Username",
@@ -277,7 +275,6 @@ DEFAULT_TEXTS = {
         "account_balance": "Số dư",
         "account_rank": "Xếp hạng nạp",
         "account_rank_none": "Chưa có",
-        # ===== HISTORY =====
         "purchase_history_title": "LỊCH SỬ MUA HÀNG",
         "purchase_history_empty": "Bạn chưa có đơn hàng nào.",
         "purchase_history_item": "{idx}. <code>#{code}</code> - {product} - <b>{amount}đ</b>\n   <i>{date}</i>",
@@ -289,11 +286,9 @@ DEFAULT_TEXTS = {
         "top_topup_item": "{medal} {user} - <b>{amount}đ</b>",
         "top_topup_your_rank": "Xếp hạng của bạn: <b>#{rank}</b> - <b>{total}đ</b>",
         "top_topup_your_rank_none": "Bạn chưa có trong bảng xếp hạng.",
-        # ===== TOPUP METHOD =====
         "topup_title": "NẠP TIỀN",
         "topup_payos_ask": "Nạp qua PayOS (VND)",
         "topup_binance_ask": "Nạp qua Binance (USDT)",
-        # ===== ADMIN SETCONFIG =====
         "setconfig_usage": "Cú pháp:\n<code>/setconfig channel @your_channel</code>\n<code>/setconfig admin @your_admin</code>",
         "setconfig_channel_ok": "Đã đặt kênh thông báo: {value}",
         "setconfig_admin_ok": "Đã đặt admin: {value}",
@@ -555,7 +550,6 @@ async def safe_send(bot, chat_id, text, **kw):
 
 
 async def _send_chunks(message, header, lines, chunk_size=3500):
-    """Gửi list lines thành nhiều message, không vượt 4096 char."""
     buf = (header + "\n") if header else ""
     for line in lines:
         if len(buf) + len(line) + 1 > chunk_size:
@@ -748,7 +742,6 @@ async def show_main_menu_query(query, uid):
 # BUTTON BUILDERS
 # ============================================================
 def product_buttons(products, page=0, per_page=5, uid=None):
-    """Cửa hàng: chỉ có nút Đơn hàng chờ + Menu chính (KHÔNG có ví/ngôn ngữ)."""
     kb = []
     for p in products:
         stock = int(p.get("stock", 0))
@@ -1684,7 +1677,6 @@ async def wallet_callback(update, context):
 # TOPUP — CHỌN PHƯƠNG THỨC TRƯỚC
 # ============================================================
 async def topup_callback(update, context):
-    """Bước 1: hiển thị màn hình chọn phương thức nạp."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1707,7 +1699,6 @@ async def topup_callback(update, context):
 
 
 async def topup_method_payos_callback(update, context):
-    """Bước 2a: user chọn PayOS → hỏi số tiền."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1723,7 +1714,6 @@ async def topup_method_payos_callback(update, context):
 
 
 async def topup_method_binance_callback(update, context):
-    """Bước 2b: user chọn Binance → kiểm tra ví đã cấu hình → hỏi số tiền."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1743,7 +1733,6 @@ async def topup_method_binance_callback(update, context):
 
 
 async def handle_topup_amount(update, context):
-    """Bước 3: user nhập số tiền → tạo order → chuyển thẳng theo phương thức đã chọn."""
     uid = update.effective_user.id
     if not context.user_data.get("topup_state"):
         return False
@@ -1763,7 +1752,6 @@ async def handle_topup_amount(update, context):
     create_topup_order(order_code, uid, amount, payment_method=method)
 
     if method == "binance":
-        # Hiển thị thẳng địa chỉ ví Binance
         addr = get_binance_address()
         if not addr:
             await safe_reply(update.message, t_html(uid, "binance_not_set"))
@@ -1784,7 +1772,6 @@ async def handle_topup_amount(update, context):
         ])
         await safe_reply(update.message, text_out, reply_markup=kb, disable_web_page_preview=True)
     else:
-        # PayOS: tạo link và hiển thị nút mở link
         kb = InlineKeyboardMarkup([
             [button(t(uid, "btn_topup_payos"), callback_data=f"topup_payos_{order_code}", ui_key="pay_payos")],
             [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
@@ -1796,7 +1783,6 @@ async def handle_topup_amount(update, context):
 
 
 async def topup_payos_callback(update, context):
-    """Tạo link PayOS và hiển thị link thanh toán."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -1826,7 +1812,6 @@ async def topup_payos_callback(update, context):
 
 
 async def topup_binance_callback(update, context):
-    """Fallback nếu link cũ còn gọi - hiển thị địa chỉ ví (giữ tương thích)."""
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
@@ -2650,10 +2635,12 @@ async def admin_setconfig(update, context):
     if len(parts) < 2:
         cur_ch = get_text("channel_link", "@your_channel") or "@your_channel"
         cur_ad = get_text("admin_link", "@your_admin") or "@your_admin"
-        txt = t_html(0, "setconfig_usage") + "\n\n" + & t_html(0,lt "setconfig_current",
-                                                            channel=html.escape(cur_ch),
-                                                            admin=html.escape(cur_ad))
-;id&gt;        await safe_reply(update.message, txt)
+        txt_usage = t_html(0, "setconfig_usage")
+        txt_current = t_html(0, "setconfig_current",
+                             channel=html.escape(cur_ch),
+                             admin=html.escape(cur_ad))
+        txt = txt_usage + "\n\n" + txt_current
+        await safe_reply(update.message, txt)
         return
     key = parts[1].lower()
     if key == "channel":
@@ -3136,7 +3123,7 @@ async def admin_help(update, context):
                "<code>/setflow &lt;id&gt; email|key</code>\n"
                "<code>/addkey &lt;id&gt; K1,K2</code>\n"
                "<code>/setdesc &lt;id&gt; Mo ta</code>\n"
-               "<code>/setemoji [emoji]</code>\n"
+               "<code>/setemoji &lt;id&gt; [emoji]</code>\n"
                "<code>/list</code> / <code>/list2</code> / <code>/detail &lt;id&gt;</code>\n"
                "<code>/del &lt;id&gt;</code> / <code>/delall confirm</code>\n\n"
                "<b>Users:</b>\n"
@@ -3301,12 +3288,10 @@ async def main():
     logger.info(f"BINANCE_AUTO_RATE: {Config.BINANCE_AUTO_RATE}")
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
 
-    # User
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("lang", lang_cmd))
 
-    # Admin products
     app.add_handler(CommandHandler("add", admin_add_product))
     app.add_handler(CommandHandler("addkey", admin_add_key))
     app.add_handler(CommandHandler("setemoji", admin_set_product_emoji))
@@ -3318,70 +3303,57 @@ async def main():
     app.add_handler(CommandHandler("del", admin_delete_product))
     app.add_handler(CommandHandler("delall", admin_delete_all))
 
-    # Admin binance
     app.add_handler(CommandHandler("setbinance", admin_setbinance))
     app.add_handler(CommandHandler("setrate", admin_setrate))
     app.add_handler(CommandHandler("viewbinance", admin_viewbinance))
     app.add_handler(CommandHandler("refreshrate", admin_refreshrate))
     app.add_handler(CommandHandler("confirm", admin_confirm_order))
 
-    # Admin config
     app.add_handler(CommandHandler("setconfig", admin_setconfig))
 
-    # Admin misc
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("notify", admin_notify))
     app.add_handler(CommandHandler("toggle_notify", admin_toggle_notify))
 
-    # Admin users
     app.add_handler(CommandHandler("users", admin_users))
     app.add_handler(CommandHandler("user", admin_user_detail_cmd))
     app.add_handler(CommandHandler("topups", admin_topups))
 
-    # Admin UI emoji
     app.add_handler(CommandHandler("setui", admin_setui))
     app.add_handler(CommandHandler("setui_force", admin_setui_force))
     app.add_handler(CommandHandler("viewui", admin_viewui))
     app.add_handler(CommandHandler("delui", admin_delui))
     app.add_handler(CommandHandler("testui", admin_testui))
 
-    # Admin texts
     app.add_handler(CommandHandler("settext", admin_settext))
     app.add_handler(CommandHandler("viewtext", admin_viewtext))
     app.add_handler(CommandHandler("deltext", admin_deltext))
 
     app.add_handler(CommandHandler("help", admin_help))
 
-    # Import .txt
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products))
 
-    # Text handler (topup + email)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
         handle_user_text))
 
-    # Callbacks
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
-    # Main menu + views
     app.add_handler(CallbackQueryHandler(menu_main_callback, pattern=r"^menu_main$"))
     app.add_handler(CallbackQueryHandler(menu_account_callback, pattern=r"^menu_account$"))
     app.add_handler(CallbackQueryHandler(menu_purchase_callback, pattern=r"^menu_purchase$"))
     app.add_handler(CallbackQueryHandler(menu_topup_history_callback, pattern=r"^menu_topup_history$"))
     app.add_handler(CallbackQueryHandler(menu_top_topup_callback, pattern=r"^menu_top_topup$"))
-    # Email
     app.add_handler(CallbackQueryHandler(confirm_send_email_callback, pattern=r"^cfmsend_\d+$"))
     app.add_handler(CallbackQueryHandler(cancel_send_email_callback, pattern=r"^cfmcancel_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_email_callback, pattern=r"^cfemail_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_binance_callback, pattern=r"^cfbinance_\d+$"))
     app.add_handler(CallbackQueryHandler(confirm_binance_topup_callback, pattern=r"^cfbinancetopup_\d+$"))
-    # Lang / shop
     app.add_handler(CallbackQueryHandler(setlang_callback, pattern=r"^setlang_"))
     app.add_handler(CallbackQueryHandler(refresh_products_callback, pattern=r"^refresh_\d+$"))
     app.add_handler(CallbackQueryHandler(menu_lang_callback, pattern=r"^menu_lang$"))
-    # Orders
     app.add_handler(CallbackQueryHandler(delete_pending_order_callback, pattern=r"^del_order_\d+$"))
     app.add_handler(CallbackQueryHandler(recheck_cancelled_order_callback, pattern=r"^recheck_\d+$"))
     app.add_handler(CallbackQueryHandler(hide_order_callback, pattern=r"^hide_order_\d+$"))
@@ -3396,9 +3368,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(cancel_order, pattern=r"^cancel_"))
     app.add_handler(CallbackQueryHandler(my_orders, pattern=r"^my_orders$"))
     app.add_handler(CallbackQueryHandler(list_products_callback, pattern=r"^back_list$"))
-    # Wallet
     app.add_handler(CallbackQueryHandler(wallet_callback, pattern=r"^wallet$"))
-    # Topup flow (mới)
     app.add_handler(CallbackQueryHandler(topup_callback, pattern=r"^topup$"))
     app.add_handler(CallbackQueryHandler(topup_method_payos_callback, pattern=r"^topup_method_payos$"))
     app.add_handler(CallbackQueryHandler(topup_method_binance_callback, pattern=r"^topup_method_binance$"))
