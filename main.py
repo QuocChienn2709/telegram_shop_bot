@@ -457,6 +457,19 @@ async def safe_send(bot, chat_id, text, **kw):
         raise
 
 
+async def _send_chunks(message, header, lines, chunk_size=3500):
+    """Gửi list lines thành nhiều message, không vượt 4096 char."""
+    buf = (header + "\n") if header else ""
+    for line in lines:
+        if len(buf) + len(line) + 1 > chunk_size:
+            if buf.strip():
+                await safe_reply(message, buf)
+            buf = ""
+        buf += line + "\n"
+    if buf.strip():
+        await safe_reply(message, buf)
+
+
 def format_key_display(key, lang="vi"):
     if not key:
         return ""
@@ -2355,10 +2368,12 @@ async def admin_setui(update, context):
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
         parts = clean.split()
         if len(parts) < 2:
-            txt = "<b>Cu phap:</b> <code>/setui &lt;key&gt; [emoji]</code>\n\n"
-            txt += "<b>UI keys:</b>\n" + "\n".join(f"- <code>{k}</code> - {v}" for k, v in UI_KEYS.items())
-            txt += "\n\n<b>Text keys:</b>\n" + "\n".join(f"- <code>{k}</code> - {v}" for k, v in TEXT_EMOJI_KEYS.items())
-            await safe_reply(update.message, txt)
+            ui_lines = [f"- <code>{k}</code> - {v}" for k, v in UI_KEYS.items()]
+            tx_lines = [f"- <code>{k}</code> - {v}" for k, v in TEXT_EMOJI_KEYS.items()]
+            await safe_reply(update.message,
+                             "<b>Cu phap:</b> <code>/setui &lt;key&gt; [emoji]</code>")
+            await _send_chunks(update.message, "<b>UI keys:</b>", ui_lines)
+            await _send_chunks(update.message, "<b>Text keys:</b>", tx_lines)
             return
         key = parts[1].lower()
         setting_key, kind = _resolve_setui_key(key)
@@ -2375,6 +2390,7 @@ async def admin_setui(update, context):
             f"Da dat emoji {label} cho <code>{key}</code>." if ok
             else f"Da luu emoji {label} cho <code>{key}</code>.")
     except Exception as e:
+        logger.error(f"admin_setui: {e}", exc_info=True)
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
@@ -2401,16 +2417,28 @@ async def admin_setui_force(update, context):
 async def admin_viewui(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
-    st = {s["key"]: s["emoji_id"] for s in get_all_settings()}
-    text = "<b>UI Emoji:</b>\n"
-    for k, desc in UI_KEYS.items():
-        eid = st.get(f"ui_{k}")
-        text += f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>\n" if eid else "<i>chua</i>\n")
-    text += "\n<b>Text Emoji:</b>\n"
-    for k, desc in TEXT_EMOJI_KEYS.items():
-        eid = st.get(f"text_{k}")
-        text += f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>\n" if eid else "<i>chua</i>\n")
-    await safe_reply(update.message, text)
+    try:
+        st = {s["key"]: s.get("emoji_id") for s in get_all_settings()}
+
+        ui_lines = []
+        for k, desc in UI_KEYS.items():
+            eid = st.get(f"ui_{k}")
+            ui_lines.append(
+                f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>")
+            )
+
+        text_lines = []
+        for k, desc in TEXT_EMOJI_KEYS.items():
+            eid = st.get(f"text_{k}")
+            text_lines.append(
+                f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>")
+            )
+
+        await _send_chunks(update.message, "<b>UI Emoji:</b>", ui_lines)
+        await _send_chunks(update.message, "<b>Text Emoji:</b>", text_lines)
+    except Exception as e:
+        logger.error(f"admin_viewui: {e}", exc_info=True)
+        await safe_reply(update.message, f"Loi viewui: <code>{html.escape(str(e))}</code>")
 
 
 async def admin_delui(update, context):
@@ -2482,9 +2510,10 @@ async def admin_settext(update, context):
     try:
         parts = update.message.text.split(maxsplit=3)
         if len(parts) < 4:
-            txt = "Cu phap: <code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n\n"
-            txt += "\n".join(f"- <code>{k}</code> - {v}" for k, v in TEXT_KEYS_INFO.items())
-            await safe_reply(update.message, txt)
+            info_lines = [f"- <code>{k}</code> - {v}" for k, v in TEXT_KEYS_INFO.items()]
+            await safe_reply(update.message,
+                "Cu phap: <code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>")
+            await _send_chunks(update.message, "<b>Keys:</b>", info_lines)
             return
         lang, key, value = parts[1].lower(), parts[2].lower(), parts[3]
         if lang not in ("vi", "en"):
@@ -2493,20 +2522,23 @@ async def admin_settext(update, context):
         set_text(f"{lang}_{key}", value)
         await safe_reply(update.message, f"Da doi <code>{lang}_{key}</code>.")
     except Exception as e:
+        logger.error(f"admin_settext: {e}", exc_info=True)
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_viewtext(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
-    ov = {t_["key"]: t_["value"] for t_ in get_all_texts()}
-    text = "<b>Texts override:</b>\n\n"
-    if not ov:
-        text += "<i>Chua co override.</i>"
-    else:
-        for k, v in ov.items():
-            text += f"- <code>{k}</code>\n  <i>{html.escape(v[:100])}</i>\n"
-    await safe_reply(update.message, text)
+    try:
+        ov = {t_["key"]: t_["value"] for t_ in get_all_texts()}
+        if not ov:
+            await safe_reply(update.message, "<b>Texts override:</b>\n\n<i>Chua co override.</i>")
+            return
+        lines = [f"- <code>{k}</code>\n  <i>{html.escape(v[:100])}</i>" for k, v in ov.items()]
+        await _send_chunks(update.message, "<b>Texts override:</b>", lines)
+    except Exception as e:
+        logger.error(f"admin_viewtext: {e}", exc_info=True)
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
 async def admin_deltext(update, context):
@@ -2608,37 +2640,41 @@ async def admin_stats(update, context):
 async def admin_help(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
-    txt = ("<b>Admin commands:</b>\n\n"
-           "<code>/add Ten Gia SL [Keys]</code>\n"
-           "<code>/add Ten|Mo_ta Gia SL [Keys]</code>\n"
-           "<code>/setflow &lt;id&gt; email|key</code>\n"
-           "<code>/addkey &lt;id&gt; K1,K2</code>\n"
-           "<code>/setdesc &lt;id&gt; Mo ta</code>\n"
-           "<code>/setemoji &lt;id&gt; [emoji]</code>\n"
-           "<code>/list</code> / <code>/list2</code> / <code>/detail &lt;id&gt;</code>\n"
-           "<code>/del &lt;id&gt;</code> / <code>/delall confirm</code>\n\n"
-           "<b>Users:</b>\n"
-           "<code>/users [page]</code> - DS users\n"
-           "<code>/user &lt;id&gt;</code> - Chi tiet user\n"
-           "<code>/topups [page]</code> - Users da nap vi\n\n"
-           "<b>Binance:</b>\n"
-           "<code>/setbinance &lt;address&gt; [network]</code>\n"
-           "<code>/setrate &lt;VND_per_USDT&gt;</code>\n"
-           "<code>/viewbinance</code> / <code>/refreshrate</code>\n"
-           "<code>/confirm &lt;order&gt;</code>\n\n"
-           "<b>UI + Text Emoji:</b>\n"
-           "<code>/setui &lt;key&gt; [emoji]</code>\n"
-           "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n"
-           "<code>/testui &lt;key&gt;</code>\n\n"
-           "<b>Texts:</b>\n"
-           "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
-           "<code>/viewtext</code> / <code>/deltext</code>\n\n"
-           "<b>Thong bao:</b>\n"
-           "<code>/notify &lt;id&gt; &lt;qty&gt; [danh_muc]</code> - Thong bao thu cong\n"
-           "<code>/toggle_notify</code> - Bat/tat tu dong thong bao\n\n"
-           "<b>Khac:</b>\n"
-           "<code>/broadcast &lt;msg&gt;</code> / <code>/stats</code>")
-    await safe_reply(update.message, txt)
+    try:
+        txt = ("<b>Admin commands:</b>\n\n"
+               "<code>/add Ten Gia SL [Keys]</code>\n"
+               "<code>/add Ten|Mo_ta Gia SL [Keys]</code>\n"
+               "<code>/setflow &lt;id&gt; email|key</code>\n"
+               "<code>/addkey &lt;id&gt; K1,K2</code>\n"
+               "<code>/setdesc &lt;id&gt; Mo ta</code>\n"
+               "<code>/setemoji &lt;id&gt; [emoji]</code>\n"
+               "<code>/list</code> / <code>/list2</code> / <code>/detail &lt;id&gt;</code>\n"
+               "<code>/del &lt;id&gt;</code> / <code>/delall confirm</code>\n\n"
+               "<b>Users:</b>\n"
+               "<code>/users [page]</code>\n"
+               "<code>/user &lt;id&gt;</code>\n"
+               "<code>/topups [page]</code>\n\n"
+               "<b>Binance:</b>\n"
+               "<code>/setbinance &lt;address&gt; [network]</code>\n"
+               "<code>/setrate &lt;VND_per_USDT&gt;</code>\n"
+               "<code>/viewbinance</code> / <code>/refreshrate</code>\n"
+               "<code>/confirm &lt;order&gt;</code>\n\n"
+               "<b>UI + Text Emoji:</b>\n"
+               "<code>/setui &lt;key&gt; [emoji]</code>\n"
+               "<code>/viewui</code> / <code>/delui &lt;key&gt;</code>\n"
+               "<code>/testui &lt;key&gt;</code>\n\n"
+               "<b>Texts:</b>\n"
+               "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
+               "<code>/viewtext</code> / <code>/deltext</code>\n\n"
+               "<b>Thong bao:</b>\n"
+               "<code>/notify &lt;id&gt; &lt;qty&gt; [danh_muc]</code>\n"
+               "<code>/toggle_notify</code>\n\n"
+               "<b>Khac:</b>\n"
+               "<code>/broadcast &lt;msg&gt;</code> / <code>/stats</code>")
+        await safe_reply(update.message, txt)
+    except Exception as e:
+        logger.error(f"admin_help: {e}", exc_info=True)
+        await safe_reply(update.message, f"Loi help: <code>{html.escape(str(e))}</code>")
 
 
 # ============================================================
