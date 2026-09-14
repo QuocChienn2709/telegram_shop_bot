@@ -236,6 +236,19 @@ DEFAULT_TEXTS = {
         "admin_topups_title": "Danh sách users đã nạp ví",
         "admin_user_detail": "Chi tiết người dùng",
         "admin_user_topup_history": "Lịch sử nạp ví",
+        "notify_title": "THÔNG BÁO TỪ HỆ THỐNG",
+        "notify_line": "━━━━━━━━━━━━━━━━",
+        "notify_body": "Kho hàng vừa được cập nhật thêm Sản phẩm mới!\n\nDanh mục: {category}\nSản phẩm: {product}\nSố lượng thêm: {qty} sản phẩm\n\nMọi người nhanh tay truy cập bot để mua nhé, số lượng có hạn!",
+        "notify_sent": "Đã gửi thông báo: OK {ok} | FAIL {fail}",
+        "notify_disabled": "Tự động thông báo đang TẮT. Bật bằng: /toggle_notify",
+        "notify_status_on": "Trạng thái tự động thông báo: BẬT",
+        "notify_status_off": "Trạng thái tự động thông báo: TẮT",
+        "notify_toggled_on": "Đã BẬT tự động thông báo kho",
+        "notify_toggled_off": "Đã TẮT tự động thông báo kho",
+        "notify_usage": "Cú pháp: /notify <product_id> <so_luong> [danh_muc]",
+        "notify_not_found": "Không tìm thấy sản phẩm.",
+        "notify_no_users": "Không có user nào để gửi.",
+        "notify_running": "Đang gửi thông báo...",
     },
     "en": {
         "shop_empty": "No products available yet.",
@@ -328,6 +341,19 @@ DEFAULT_TEXTS = {
         "admin_topups_title": "Users with wallet balance",
         "admin_user_detail": "User detail",
         "admin_user_topup_history": "Topup history",
+        "notify_title": "SYSTEM NOTIFICATION",
+        "notify_line": "━━━━━━━━━━━━━━━━",
+        "notify_body": "The store has just been restocked with new products!\n\nCategory: {category}\nProduct: {product}\nQuantity added: {qty}\n\nHurry up and visit the bot to buy, limited stock!",
+        "notify_sent": "Notification sent: OK {ok} | FAIL {fail}",
+        "notify_disabled": "Auto notification is OFF. Enable with: /toggle_notify",
+        "notify_status_on": "Auto notification status: ON",
+        "notify_status_off": "Auto notification status: OFF",
+        "notify_toggled_on": "Auto notification turned ON",
+        "notify_toggled_off": "Auto notification turned OFF",
+        "notify_usage": "Usage: /notify <product_id> <qty> [category]",
+        "notify_not_found": "Product not found.",
+        "notify_no_users": "No users to notify.",
+        "notify_running": "Sending notification...",
     },
 }
 
@@ -371,6 +397,8 @@ TEXT_EMOJI_KEYS = {
     "admin_binance_req": "Tiêu đề yêu cầu xác nhận Binance",
     "admin_binance_topup_req": "Tiêu đề yêu cầu xác nhận nạp Binance",
     "binance_sent": "Thông báo user đã chuyển khoản",
+    "notify_title": "Tiêu đề thông báo hệ thống",
+    "notify_body": "Nội dung thông báo kho",
 }
 
 
@@ -653,6 +681,35 @@ async def check_email_block(query, uid):
             pass
         return True
     return False
+
+
+async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
+    """Gửi thông báo tới toàn bộ user khi có hàng mới. Trả về (sent, fail)."""
+    if get_text("auto_broadcast", "true").strip().lower() != "true":
+        logger.info("broadcast_new_stock: auto_broadcast OFF, skip")
+        return 0, 0
+    users = get_all_user_ids()
+    if not users:
+        return 0, 0
+    prod_name = (product or {}).get("name") or "?"
+    title_prefix = text_emoji_html("notify_title")
+    title = t(0, "notify_title")
+    line = t(0, "notify_line")
+    body_raw = t(0, "notify_body", category=category, product=prod_name, qty=added_qty)
+    body_prefix = text_emoji_html("notify_body")
+    msg = (f"{title_prefix}<b>{html.escape(title)}</b>\n"
+           f"{html.escape(line)}\n"
+           f"{body_prefix}{html.escape(body_raw)}")
+    sent, fail = 0, 0
+    for uid in users:
+        try:
+            await safe_send(bot, uid, msg)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            fail += 1
+    logger.info(f"broadcast_new_stock: product={prod_name} qty={added_qty} sent={sent} fail={fail}")
+    return sent, fail
 
 
 # ============================================================
@@ -1745,6 +1802,14 @@ async def admin_add_product(update, context):
             f"Ton kho: {stock}\n"
             f"Keys: {len(keys)}{emoji_info}{emoji_note}\n\n"
             f"<i>Bat email flow: <code>/setflow {pid} email</code></i>")
+        # Auto broadcast
+        if stock > 0:
+            asyncio.create_task(broadcast_new_stock(
+                context.bot,
+                {"name": name},
+                stock,
+                category="Sản phẩm mới"
+            ))
     except Exception as e:
         logger.error(f"add: {e}", exc_info=True)
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -1821,6 +1886,18 @@ async def admin_import_products(update, context):
         for ln, err in fail[:10]:
             rpt += f"Dong {ln}: {html.escape(err)}\n"
     await safe_reply(update.message, rpt)
+    # Auto broadcast
+    if ok:
+        total_qty = sum(x[3] for x in ok)
+        names = ", ".join(x[1] for x in ok[:3])
+        if len(ok) > 3:
+            names += f" ... (+{len(ok)-3})"
+        asyncio.create_task(broadcast_new_stock(
+            context.bot,
+            {"name": names},
+            total_qty,
+            category="Nhập hàng loạt"
+        ))
 
 
 async def admin_add_key(update, context):
@@ -1843,6 +1920,12 @@ async def admin_add_key(update, context):
         get_db().products.update_one({"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}})
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
+        asyncio.create_task(broadcast_new_stock(
+            context.bot,
+            {"name": p["name"]},
+            len(new_keys),
+            category="Nhập thêm key"
+        ))
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
@@ -2051,6 +2134,63 @@ async def admin_broadcast(update, context):
         except Exception as e:
             fail += 1
     await safe_reply(update.message, f"Broadcast xong. OK {sent} | FAIL {fail}")
+
+
+async def admin_notify(update, context):
+    """Admin gửi thủ công: /notify <product_id> <qty> [category]"""
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    parts = update.message.text.split(maxsplit=3)
+    if len(parts) < 3:
+        await safe_reply(update.message, t_html(0, "notify_usage"))
+        return
+    try:
+        pid = int(parts[1])
+        qty = int(parts[2])
+        if qty <= 0:
+            raise ValueError()
+    except ValueError:
+        await safe_reply(update.message, t_html(0, "notify_usage"))
+        return
+    category = parts[3].strip() if len(parts) >= 4 else "Sản phẩm"
+    p = get_product(pid)
+    if not p:
+        await safe_reply(update.message, t_html(0, "notify_not_found"))
+        return
+    users = get_all_user_ids()
+    if not users:
+        await safe_reply(update.message, t_html(0, "notify_no_users"))
+        return
+    msg_wait = await safe_reply(update.message, t_html(0, "notify_running"))
+    # Force send (bypass auto_broadcast flag)
+    title_prefix = text_emoji_html("notify_title")
+    title = t(0, "notify_title")
+    line = t(0, "notify_line")
+    body_raw = t(0, "notify_body", category=category, product=p["name"], qty=qty)
+    body_prefix = text_emoji_html("notify_body")
+    msg = (f"{title_prefix}<b>{html.escape(title)}</b>\n"
+           f"{html.escape(line)}\n"
+           f"{body_prefix}{html.escape(body_raw)}")
+    sent, fail = 0, 0
+    for uid in users:
+        try:
+            await safe_send(context.bot, uid, msg)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            fail += 1
+    await safe_edit(msg_wait, t_html(0, "notify_sent", ok=sent, fail=fail))
+
+
+async def admin_toggle_notify(update, context):
+    """Bật/tắt tự động thông báo kho."""
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    cur = get_text("auto_broadcast", "true").strip().lower()
+    new = "false" if cur == "true" else "true"
+    set_text("auto_broadcast", new)
+    key = "notify_toggled_on" if new == "true" else "notify_toggled_off"
+    await safe_reply(update.message, t_html(0, key))
 
 
 # ============================================================
@@ -2331,6 +2471,8 @@ TEXT_KEYS_INFO = {
     "youtube_email_done": "Hoan tat email", "out_of_stock_wait": "Thong bao het hang cho admin",
     "admin_binance_req": "Tieu de yeu cau xac nhan Binance",
     "admin_binance_topup_req": "Tieu de yeu cau xac nhan nap Binance",
+    "notify_title": "Tieu de thong bao he thong",
+    "notify_body": "Noi dung thong bao kho (co {category}, {product}, {qty})",
 }
 
 
@@ -2454,11 +2596,13 @@ async def admin_stats(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     live, src, _ = get_binance_rate_live()
+    auto_state = "BAT" if get_text("auto_broadcast", "true").strip().lower() == "true" else "TAT"
     await safe_reply(update.message,
         f"<b>Stats</b>\nUsers: <code>{count_users()}</code>\n"
         f"Users co vi: <code>{count_users_with_topup()}</code>\n"
         f"SP: <code>{count_all_products()}</code>\nCon: <code>{count_products()}</code>\n"
-        f"Rate: <code>{live:,.2f}</code> ({html.escape(src)})")
+        f"Rate: <code>{live:,.2f}</code> ({html.escape(src)})\n"
+        f"Auto broadcast: <b>{auto_state}</b>")
 
 
 async def admin_help(update, context):
@@ -2489,6 +2633,9 @@ async def admin_help(update, context):
            "<b>Texts:</b>\n"
            "<code>/settext &lt;vi|en&gt; &lt;key&gt; &lt;value&gt;</code>\n"
            "<code>/viewtext</code> / <code>/deltext</code>\n\n"
+           "<b>Thong bao:</b>\n"
+           "<code>/notify &lt;id&gt; &lt;qty&gt; [danh_muc]</code> - Thong bao thu cong\n"
+           "<code>/toggle_notify</code> - Bat/tat tu dong thong bao\n\n"
            "<b>Khac:</b>\n"
            "<code>/broadcast &lt;msg&gt;</code> / <code>/stats</code>")
     await safe_reply(update.message, txt)
@@ -2652,6 +2799,8 @@ async def main():
     # Admin misc
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("stats", admin_stats))
+    app.add_handler(CommandHandler("notify", admin_notify))
+    app.add_handler(CommandHandler("toggle_notify", admin_toggle_notify))
 
     # Admin users
     app.add_handler(CommandHandler("users", admin_users))
