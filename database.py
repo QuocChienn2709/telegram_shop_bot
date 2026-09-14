@@ -595,43 +595,66 @@ def get_usdt_rate():
 def set_usdt_rate(r):
     set_text("usdt_rate", str(int(r)))
 # ============================================================
-# TOP DEPOSITORS + ACCOUNT STATS
+# HISTORY + RANK (NEW)
 # ============================================================
-def get_top_depositors(limit=10):
-    """Lấy top user nạp nhiều nhất (chỉ tính đơn topup đã paid)."""
+def get_user_purchased_orders(user_id, limit=20):
+    """Lịch sử mua hàng đã thanh toán."""
+    cur = _get_db().orders.find(
+        {"user_id": int(user_id), "type": "product", "status": "paid"},
+        {"order_code": 1, "product_id": 1, "amount": 1, "created_at": 1,
+         "paid_at": 1, "_id": 0}
+    ).sort("paid_at", DESCENDING).limit(int(limit))
+    return list(cur)
+
+
+def get_user_paid_topups(user_id, limit=20):
+    """Lịch sử nạp ví đã thanh toán."""
+    cur = _get_db().orders.find(
+        {"user_id": int(user_id), "type": "topup", "status": "paid"},
+        {"order_code": 1, "amount": 1, "created_at": 1, "paid_at": 1,
+         "payment_method": 1, "_id": 0}
+    ).sort("paid_at", DESCENDING).limit(int(limit))
+    return list(cur)
+
+
+def get_top_topup_users(limit=10):
+    """Top N user nạp nhiều nhất (tổng amount đã paid)."""
     pipeline = [
         {"$match": {"type": "topup", "status": "paid"}},
         {"$group": {"_id": "$user_id", "total": {"$sum": "$amount"}}},
-        {"$sort": {"total": -1}},
+        {"$sort": {"total": DESCENDING}},
         {"$limit": int(limit)},
     ]
-    return list(_get_db().orders.aggregate(pipeline))
+    result = list(_get_db().orders.aggregate(pipeline))
+    user_ids = [r["_id"] for r in result]
+    users_info = {}
+    for u in _get_db().users.find(
+        {"user_id": {"$in": user_ids}},
+        {"user_id": 1, "username": 1, "first_name": 1, "last_name": 1, "_id": 0}
+    ):
+        users_info[u["user_id"]] = u
+    out = []
+    for r in result:
+        info = users_info.get(r["_id"], {})
+        out.append({
+            "user_id": r["_id"],
+            "total": r["total"],
+            "username": info.get("username"),
+            "first_name": info.get("first_name"),
+            "last_name": info.get("last_name"),
+        })
+    return out
 
 
 def get_user_topup_rank(user_id):
-    """Trả về hạng (1-indexed) của user trong bảng top nạp. 0 nếu chưa nạp."""
+    """Xếp hạng nạp của user (1-based). Trả về (rank, total) hoặc (None, 0)."""
     pipeline = [
         {"$match": {"type": "topup", "status": "paid"}},
         {"$group": {"_id": "$user_id", "total": {"$sum": "$amount"}}},
-        {"$sort": {"total": -1}},
+        {"$sort": {"total": DESCENDING}},
     ]
-    rows = list(_get_db().orders.aggregate(pipeline))
-    for i, r in enumerate(rows, 1):
+    result = list(_get_db().orders.aggregate(pipeline))
+    for i, r in enumerate(result, 1):
         if r["_id"] == int(user_id):
             return i, r["total"]
-    return 0, 0
-
-
-def count_user_orders(user_id):
-    return _get_db().orders.count_documents({
-        "user_id": int(user_id), "type": "product", "status": "paid"
-    })
-
-
-def get_user_total_spent(user_id):
-    pipeline = [
-        {"$match": {"user_id": int(user_id), "type": "product", "status": "paid"}},
-        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
-    ]
-    r = list(_get_db().orders.aggregate(pipeline))
-    return r[0]["total"] if r else 0
+    return None, 0
