@@ -594,3 +594,44 @@ def get_usdt_rate():
 
 def set_usdt_rate(r):
     set_text("usdt_rate", str(int(r)))
+# ============================================================
+# TOP DEPOSITORS + ACCOUNT STATS
+# ============================================================
+def get_top_depositors(limit=10):
+    """Lấy top user nạp nhiều nhất (chỉ tính đơn topup đã paid)."""
+    pipeline = [
+        {"$match": {"type": "topup", "status": "paid"}},
+        {"$group": {"_id": "$user_id", "total": {"$sum": "$amount"}}},
+        {"$sort": {"total": -1}},
+        {"$limit": int(limit)},
+    ]
+    return list(_get_db().orders.aggregate(pipeline))
+
+
+def get_user_topup_rank(user_id):
+    """Trả về hạng (1-indexed) của user trong bảng top nạp. 0 nếu chưa nạp."""
+    pipeline = [
+        {"$match": {"type": "topup", "status": "paid"}},
+        {"$group": {"_id": "$user_id", "total": {"$sum": "$amount"}}},
+        {"$sort": {"total": -1}},
+    ]
+    rows = list(_get_db().orders.aggregate(pipeline))
+    for i, r in enumerate(rows, 1):
+        if r["_id"] == int(user_id):
+            return i, r["total"]
+    return 0, 0
+
+
+def count_user_orders(user_id):
+    return _get_db().orders.count_documents({
+        "user_id": int(user_id), "type": "product", "status": "paid"
+    })
+
+
+def get_user_total_spent(user_id):
+    pipeline = [
+        {"$match": {"user_id": int(user_id), "type": "product", "status": "paid"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+    ]
+    r = list(_get_db().orders.aggregate(pipeline))
+    return r[0]["total"] if r else 0
