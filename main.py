@@ -2859,7 +2859,7 @@ async def admin_setui_force(update, context):
         if not setting_key:
            t await safe_reply(update.message, "Key_ loi.")
             return
-        set_setting(set["ting_key, emoji_id)
+        set_setting(setting_key, emoji_id)
         await safe_reply(update.message, f"Ep lukeyu emoji cho <code>{key}</code>.")
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
