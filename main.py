@@ -5,7 +5,9 @@ import json
 import logging
 import os
 import re
+import sys
 import time
+import traceback
 import requests
 from datetime import datetime
 
@@ -45,9 +47,13 @@ from database import (
 )
 from payos_client import create_payment_link, verify_payment_webhook, get_payment_status
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 logger = logging.getLogger(__name__)
-init_db()
+# init_db() se duoc goi trong main() de tranh crash khi import
 
 EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 
@@ -575,7 +581,6 @@ def format_key_display(key, lang="vi"):
 
 
 def format_delivery_display(key, is_link=False, lang="vi"):
-    """Hiển thị nội dung giao hàng: link hay tài khoản."""
     if not key:
         return ""
     if is_link:
@@ -2276,7 +2281,6 @@ async def admin_add_link(update, context):
         await safe_reply(update.message, "Khong co quyen.")
         return
     try:
-        # Bỏ qua emoji, không lưu
         clean, _ = extract_custom_emoji_from_message(update.message)
         clean = re.sub(r'\s+\|', '|', clean).strip()
         if clean.lower().startswith("/addlink"):
@@ -2287,7 +2291,6 @@ async def admin_add_link(update, context):
             await safe_reply(update.message, "Thieu tham so.")
             return
 
-        # Tách tên và phần còn lại
         if "|" in body:
             name_part, rest = body.split("|", 1)
             name = name_part.strip()
@@ -2310,7 +2313,6 @@ async def admin_add_link(update, context):
             await safe_reply(update.message, "Thieu tham so.")
             return
 
-        # Tìm vị trí bắt đầu của link (token chứa http/https/t.me)
         link_start_idx = -1
         for i, tok in enumerate(tokens):
             tl = tok.lower()
@@ -2326,7 +2328,6 @@ async def admin_add_link(update, context):
             await safe_reply(update.message, "Thieu gia hoac so luong.")
             return
 
-        # Lấy stock, price từ các token ngay trước link
         stock_str = tokens[link_start_idx - 1]
         price_str = tokens[link_start_idx - 2]
         description = " ".join(tokens[:link_start_idx - 2]).strip() if has_desc else ""
@@ -2339,7 +2340,6 @@ async def admin_add_link(update, context):
             await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
             return
 
-        # Gộp các token còn lại thành chuỗi link, tách bằng dấu phẩy hoặc khoảng trắng
         links_str = " ".join(tokens[link_start_idx:])
         links = [k.strip() for k in re.split(r'[,\s]+', links_str) if k.strip()]
 
@@ -2349,7 +2349,6 @@ async def admin_add_link(update, context):
 
         stock = len(links)
 
-        # Thêm sản phẩm, KHÔNG lưu emoji
         pid = add_product(name, description, price, stock, links,
                           emoji_id=None, requires_email=False, is_link=True)
         desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
@@ -2871,10 +2870,10 @@ async def admin_user_detail_cmd(update, context):
         return
     u = get_user_detail(target_id)
     if not u:
-        await safe_reply(update.message, f"Khong tim thay user <code>{target_id}</code>.")
+        await safe_reply(update.message, f"Khong tim, thay user <code>{target_id}</code>.")
         return
     username = u.get("username")
-    first = u.get("first_name") or ""
+    first = u.get("first_name") u in enumerate(users or ""
     last = u.get("last_name") or ""
     full_name = f"{first} {last}".strip() or "?"
     bal = int(u.get("balance", 0))
@@ -2931,7 +2930,7 @@ async def admin_topups(update, context):
     text = f"<b>{html.escape(t(0, 'admin_topups_title'))}</b>\n"
     text += f"Trang {page}/{(total - 1) // per_page + 1} - Tong: <b>{total}</b>\n\n"
     total_balance = 0
-    for i, u in enumerate(users, 1):
+    for i, 1):
         uid = u.get("user_id", "?")
         username = u.get("username")
         first = u.get("first_name") or ""
@@ -2939,10 +2938,10 @@ async def admin_topups(update, context):
         full_name = f"{first} {last}".strip() or "?"
         bal = int(u.get("balance", 0))
         total_balance += bal
-        line = f"{offset - + i}. <code>{uid}</code>"
+        line = f"{offset + i}. <code>{uid}</code>"
         if username:
-            " line += f" @{html.escape +(username)}"
-        line += f" - { (html.escape(full_name)} - <b>{bal:,}d</b>"
+            line += f" @{html.escape(username)}"
+        line += f" - {html.escape(full_name)} - <b>{bal:,}d</b>"
         text += line + "\n"
     text += f"\n<b>Tong so du trang nay: {total_balance:,} VND</b>"
     nav = []
@@ -3028,7 +3027,7 @@ async def admin_viewui(update, context):
         for k, desc in UI_KEYS.items():
             eid = st.get(f"ui_{k}")
             ui_lines.append(
-                f"- <code>{k}</code> - {desc}f"<code>{eid}</code>" if eid else "<i>chua</i>")
+                f"- <code>{k}</code> - {desc} - " + (f"<code>{eid}</code>" if eid else "<i>chua</i>")
             )
         text_lines = []
         for k, desc in TEXT_EMOJI_KEYS.items():
@@ -3433,14 +3432,29 @@ async def payos_webhook(request):
 # MAIN
 # ============================================================
 async def main():
+    logger.info("=== STARTUP BEGIN ===")
     logger.info(f"ADMIN_IDS loaded: {Config.ADMIN_IDS}")
     logger.info(f"BINANCE_AUTO_RATE: {Config.BINANCE_AUTO_RATE}")
-    app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+    logger.info(f"WEBHOOK_URL: {Config.WEBHOOK_URL or '(empty)'}")
+    sys.stdout.flush()
 
+    try:
+        init_db()
+        logger.info("init_db OK")
+    except Exception as e:
+        logger.error(f"init_db FAILED: {e}", exc_info=True)
+    sys.stdout.flush()
+
+    app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
+    logger.info("Application built OK")
+    sys.stdout.flush()
+
+    # User
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("lang", lang_cmd))
 
+    # Admin products
     app.add_handler(CommandHandler("add", admin_add_product))
     app.add_handler(CommandHandler("addlink", admin_add_link))
     app.add_handler(CommandHandler("addkey", admin_add_key))
@@ -3453,43 +3467,52 @@ async def main():
     app.add_handler(CommandHandler("del", admin_delete_product))
     app.add_handler(CommandHandler("delall", admin_delete_all))
 
+    # Admin binance
     app.add_handler(CommandHandler("setbinance", admin_setbinance))
     app.add_handler(CommandHandler("setrate", admin_setrate))
     app.add_handler(CommandHandler("viewbinance", admin_viewbinance))
     app.add_handler(CommandHandler("refreshrate", admin_refreshrate))
     app.add_handler(CommandHandler("confirm", admin_confirm_order))
 
+    # Admin config
     app.add_handler(CommandHandler("setconfig", admin_setconfig))
 
+    # Admin misc
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("notify", admin_notify))
     app.add_handler(CommandHandler("toggle_notify", admin_toggle_notify))
 
+    # Admin users
     app.add_handler(CommandHandler("users", admin_users))
     app.add_handler(CommandHandler("user", admin_user_detail_cmd))
     app.add_handler(CommandHandler("topups", admin_topups))
 
+    # Admin UI emoji
     app.add_handler(CommandHandler("setui", admin_setui))
     app.add_handler(CommandHandler("setui_force", admin_setui_force))
     app.add_handler(CommandHandler("viewui", admin_viewui))
     app.add_handler(CommandHandler("delui", admin_delui))
     app.add_handler(CommandHandler("testui", admin_testui))
 
+    # Admin texts
     app.add_handler(CommandHandler("settext", admin_settext))
     app.add_handler(CommandHandler("viewtext", admin_viewtext))
     app.add_handler(CommandHandler("deltext", admin_deltext))
 
     app.add_handler(CommandHandler("help", admin_help))
 
+    # Import .txt
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products))
 
+    # Text handler (topup + email)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
         handle_user_text))
 
+    # Callbacks
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
     app.add_handler(CallbackQueryHandler(menu_main_callback, pattern=r"^menu_main$"))
     app.add_handler(CallbackQueryHandler(menu_account_callback, pattern=r"^menu_account$"))
@@ -3528,13 +3551,22 @@ async def main():
     app.add_handler(CallbackQueryHandler(topup_check_callback, pattern=r"^topup_check_\d+$"))
     app.add_handler(CallbackQueryHandler(pay_wallet_callback, pattern=r"^pay_wallet_\d+$"))
 
+    logger.info("Handlers registered OK")
+    sys.stdout.flush()
+
     await app.initialize()
+    logger.info("app.initialize() OK")
+    sys.stdout.flush()
+
     await app.start()
+    logger.info("app.start() OK")
+    sys.stdout.flush()
 
     if Config.WEBHOOK_URL:
         wh_url = f"{Config.WEBHOOK_URL}/telegram"
         await app.bot.set_webhook(wh_url)
         logger.info(f"Webhook set: {wh_url}")
+        sys.stdout.flush()
 
     web_app = web.Application()
     web_app["bot_app"] = app
@@ -3550,20 +3582,37 @@ async def main():
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info(f"Server started port {port}")
+    logger.info(f"=== SERVER STARTED PORT {port} ===")
+    sys.stdout.flush()
 
     try:
-        await asyncio.Event().wait()
+        while True:
+            await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
-        pass
+        logger.info("Shutdown signal received")
     finally:
-        await runner.cleanup()
-        await app.stop()
-        await app.shutdown()
+        try:
+            await runner.cleanup()
+        except Exception as e:
+            logger.error(f"runner.cleanup: {e}")
+        try:
+            await app.stop()
+        except Exception as e:
+            logger.error(f"app.stop: {e}")
+        try:
+            await app.shutdown()
+        except Exception as e:
+            logger.error(f"app.shutdown: {e}")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Stopped")
+        logger.info("Stopped by keyboard")
+    except Exception as e:
+        logger.error(f"FATAL: {e}")
+        logger.error(traceback.format_exc())
+        sys.stdout.flush()
+        sys.stderr.flush()
+        raise
