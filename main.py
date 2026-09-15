@@ -5,9 +5,7 @@ import json
 import logging
 import os
 import re
-import sys
 import time
-import traceback
 import requests
 from datetime import datetime
 
@@ -47,13 +45,9 @@ from database import (
 )
 from payos_client import create_payment_link, verify_payment_webhook, get_payment_status
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-# init_db() se duoc goi trong main() de tranh crash khi import
+init_db()
 
 EMAIL_RE = re.compile(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
 
@@ -1042,7 +1036,7 @@ async def show_product_detail(update, context):
         kb = detail_buttons(pid, uid=uid)
     else:
         kb = InlineKeyboardMarkup([[button(t(uid, "btn_back"), callback_data="back_list", ui_key="back")]])
-        text += f"\n\n⚠️ <b>{html.escape(t(uid, 'out_of_stock_wait'))}</b>"
+        text += f"\n\n<b>{html.escape(t(uid, 'out_of_stock_wait'))}</b>"
     await safe_edit(query, text, reply_markup=kb)
 
 
@@ -1500,20 +1494,20 @@ async def menu_account_callback(update, context):
     username = info.get("username")
     first = info.get("first_name") or ""
     last = info.get("last_name") or ""
-    full_name = f"{first} {last}".strip() or "—"
+    full_name = f"{first} {last}".strip() or "-"
     reg = info.get("registered_at")
-    reg_str = reg.strftime("%d/%m/%Y %H:%M") if reg else "—"
+    reg_str = reg.strftime("%d/%m/%Y %H:%M") if reg else "-"
     rank_str = f"#{rank}" if rank else t(uid, "account_rank_none")
 
     title_prefix = text_emoji_html("account_title")
     title = t(uid, "account_title")
     text = (f"{title_prefix}<b>{title}</b>\n\n"
             f"<b>{html.escape(t(uid, 'account_id'))}:</b> <code>{uid}</code>\n"
-            f"<b>{html.escape(t(uid, 'account_username'))}:</b> {('@' + html.escape(username)) if username else '—'}\n"
+            f"<b>{html.escape(t(uid, 'account_username'))}:</b> {('@' + html.escape(username)) if username else '-'}\n"
             f"<b>{html.escape(t(uid, 'account_name'))}:</b> {html.escape(full_name)}\n"
             f"<b>{html.escape(t(uid, 'account_registered'))}:</b> {reg_str}\n\n"
-            f"<b>{html.escape(t(uid, 'account_total_topup'))}:</b> {total:,}đ\n"
-            f"<b>{html.escape(t(uid, 'account_balance'))}:</b> {bal:,}đ\n"
+            f"<b>{html.escape(t(uid, 'account_total_topup'))}:</b> {total:,}d\n"
+            f"<b>{html.escape(t(uid, 'account_balance'))}:</b> {bal:,}d\n"
             f"<b>{html.escape(t(uid, 'account_rank'))}:</b> {rank_str}")
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_topup_menu"), callback_data="topup", ui_key="topup_menu_btn"),
@@ -1684,8 +1678,8 @@ async def wallet_callback(update, context):
     bal = get_user_balance(uid)
     total = get_total_topup_amount(uid)
     text = (f"{ui_emoji_html('wallet')} <b>{html.escape(t(uid, 'wallet_title'))}</b>\n\n"
-            f"<b>{html.escape(t(uid, 'account_balance'))}:</b> {bal:,}đ\n"
-            f"<b>{html.escape(t(uid, 'account_total_topup'))}:</b> {total:,}đ")
+            f"<b>{html.escape(t(uid, 'account_balance'))}:</b> {bal:,}d\n"
+            f"<b>{html.escape(t(uid, 'account_total_topup'))}:</b> {total:,}d")
     kb = InlineKeyboardMarkup([
         [button(t(uid, "btn_topup_menu"), callback_data="topup", ui_key="topup_menu_btn"),
          button(t(uid, "btn_topup_history"), callback_data="menu_topup_history", ui_key="topup_history_btn")],
@@ -1715,7 +1709,7 @@ async def topup_callback(update, context):
     title_prefix = text_emoji_html("topup_title")
     title = t(uid, "topup_title")
     text = (f"{title_prefix}<b>{title}</b>\n\n"
-            f"<b>{html.escape(t(uid, 'wallet_balance'))}:</b> {bal:,}đ\n\n"
+            f"<b>{html.escape(t(uid, 'wallet_balance'))}:</b> {bal:,}d\n\n"
             f"<b>{html.escape(t(uid, 'payment_method_title'))}</b>")
     await safe_edit(query, text, reply_markup=kb)
 
@@ -1781,13 +1775,13 @@ async def handle_topup_amount(update, context):
         rate, src, _ = get_binance_rate_live()
         usdt = round(amount / rate, 2)
         net = get_binance_network()
-        text_out = (f"<b>Nạp ví #{order_code}</b>\n\n"
-                    f"<b>Số tiền:</b> {amount:,} VND ≈ <code>{usdt} USDT</code>\n"
+        text_out = (f"<b>Nap vi #{order_code}</b>\n\n"
+                    f"<b>So tien:</b> {amount:,} VND = <code>{usdt} USDT</code>\n"
                     f"<b>Rate:</b> <code>{rate:,.0f}</code> ({html.escape(src)})\n"
-                    f"<b>Địa chỉ:</b>\n<code>{html.escape(addr)}</code>\n"
-                    f"<b>Mạng:</b> <b>{html.escape(net)}</b>\n"
+                    f"<b>Dia chi:</b>\n<code>{html.escape(addr)}</code>\n"
+                    f"<b>Mang:</b> <b>{html.escape(net)}</b>\n"
                     f"<b>Memo:</b> <code>NAP{order_code}</code>\n\n"
-                    f"Sau khi chuyển khoản, nhấn nút bên dưới để admin xác nhận.")
+                    f"Sau khi chuyen khoan, nhan nut ben duoi de admin xac nhan.")
         kb = InlineKeyboardMarkup([
             [button(t(uid, "binance_sent"), callback_data=f"topup_binance_sent_{order_code}", ui_key="binance_sent_btn")],
             [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
@@ -1825,11 +1819,11 @@ async def topup_payos_callback(update, context):
         [button(t(uid, "btn_check"), callback_data=f"topup_check_{oc}", ui_key="check")],
         [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
     ])
-    text = (f"<b>Nạp ví #{oc}</b>\n\n"
-            f"<b>Số tiền:</b> {order['amount']:,} VND\n"
-            f"<b>Nội dung CK:</b> <code>NAP{oc}</code>\n\n"
-            f'<a href="{url}">Nhấn để thanh toán</a>\n\n'
-            f"Sau khi TT, nhấn 'Đã thanh toán? Kiểm tra'.")
+    text = (f"<b>Nap vi #{oc}</b>\n\n"
+            f"<b>So tien:</b> {order['amount']:,} VND\n"
+            f"<b>Noi dung CK:</b> <code>NAP{oc}</code>\n\n"
+            f'<a href="{url}">Nhan de thanh toan</a>\n\n'
+            f"Sau khi TT, nhan 'Da thanh toan? Kiem tra'.")
     await safe_edit(query, text, reply_markup=kb, disable_web_page_preview=True)
 
 
@@ -1852,13 +1846,13 @@ async def topup_binance_callback(update, context):
     rate, src, _ = get_binance_rate_live()
     usdt = round(order["amount"] / rate, 2)
     net = get_binance_network()
-    text = (f"<b>Nạp ví #{oc}</b>\n\n"
-            f"<b>Số tiền:</b> {order['amount']:,} VND ≈ <code>{usdt} USDT</code>\n"
+    text = (f"<b>Nap vi #{oc}</b>\n\n"
+            f"<b>So tien:</b> {order['amount']:,} VND = <code>{usdt} USDT</code>\n"
             f"<b>Rate:</b> <code>{rate:,.0f}</code> ({html.escape(src)})\n"
-            f"<b>Địa chỉ:</b>\n<code>{html.escape(addr)}</code>\n"
-            f"<b>Mạng:</b> <b>{html.escape(net)}</b>\n"
+            f"<b>Dia chi:</b>\n<code>{html.escape(addr)}</code>\n"
+            f"<b>Mang:</b> <b>{html.escape(net)}</b>\n"
             f"<b>Memo:</b> <code>NAP{oc}</code>\n\n"
-            f"Sau khi chuyển khoản, nhấn nút bên dưới để admin xác nhận.")
+            f"Sau khi chuyen khoan, nhan nut ben duoi de admin xac nhan.")
     kb = InlineKeyboardMarkup([
         [button(t(uid, "binance_sent"), callback_data=f"topup_binance_sent_{oc}", ui_key="binance_sent_btn")],
         [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
@@ -1891,10 +1885,10 @@ async def topup_binance_sent_callback(update, context):
     admin_text = (f"{req_prefix}<b>{html.escape(t(0, 'admin_binance_topup_req'))}</b>\n\n"
                   f"• Order: <code>{oc}</code>\n"
                   f"• User: {html.escape(user_info)} (<code>{uid}</code>)\n"
-                  f"• Số tiền: <b>{order['amount']:,} VND</b> ≈ <b>{usdt} USDT</b>\n"
+                  f"• So tien: <b>{order['amount']:,} VND</b> = <b>{usdt} USDT</b>\n"
                   f"• Rate: <code>{rate:,.0f}</code> ({html.escape(src)})\n"
                   f"• Memo: <code>NAP{oc}</code>\n\n"
-                  f"Kiểm tra Binance → nếu đã nhận USDT → bấm nút dưới.")
+                  f"Kiem tra Binance - neu da nhan USDT - bam nut duoi.")
     kb = InlineKeyboardMarkup([
         [button(t(0, "admin_received_topup"), callback_data=f"cfbinancetopup_{oc}", ui_key="admin_recv_topup")],
         [button(t(0, "admin_cancel_order"), callback_data=f"cancel_{oc}", ui_key="admin_cancel")],
@@ -1958,7 +1952,7 @@ async def topup_check_callback(update, context):
         return
     if order["status"] == "paid":
         bal = get_user_balance(uid)
-        await query.answer("Đã nạp trước đó", show_alert=True)
+        await query.answer("Da nap truoc do", show_alert=True)
         await safe_edit(query, t_html(uid, "wallet_topup_success",
                                       amount=order["amount"], balance=bal))
         return
@@ -1967,11 +1961,11 @@ async def topup_check_callback(update, context):
     if paid:
         mark_topup_paid(oc)
         bal = get_user_balance(uid)
-        await query.answer("Nạp thành công", show_alert=True)
+        await query.answer("Nap thanh cong", show_alert=True)
         await safe_edit(query, t_html(uid, "wallet_topup_success",
                                       amount=order["amount"], balance=bal))
     else:
-        await query.answer("Chưa nhận được thanh toán", show_alert=True)
+        await query.answer("Chua nhan duoc thanh toan", show_alert=True)
 
 
 async def pay_wallet_callback(update, context):
@@ -1986,7 +1980,7 @@ async def pay_wallet_callback(update, context):
         return
     order = get_order(order_code)
     if not order or order["status"] != "pending":
-        await safe_edit(query, "Đơn không hợp lệ.", reply_markup=None)
+        await safe_edit(query, "Don khong hop le.", reply_markup=None)
         return
     bal = get_user_balance(uid)
     if bal < order["amount"]:
@@ -1996,8 +1990,8 @@ async def pay_wallet_callback(update, context):
         ])
         await safe_edit(query,
             f"<b>{html.escape(t(uid, 'wallet_not_enough'))}</b>\n\n"
-            f"Số dư: <code>{bal:,}</code> VND\n"
-            f"Cần: <code>{order['amount']:,}</code> VND",
+            f"So du: <code>{bal:,}</code> VND\n"
+            f"Can: <code>{order['amount']:,}</code> VND",
             reply_markup=kb)
         return
     if not subtract_balance(uid, order["amount"]):
@@ -2268,7 +2262,7 @@ async def admin_add_product(update, context):
                 context.bot,
                 {"name": name},
                 stock,
-                category="Sản phẩm mới"
+                category="San pham moi"
             ))
     except Exception as e:
         logger.error(f"add: {e}", exc_info=True)
@@ -2276,7 +2270,6 @@ async def admin_add_product(update, context):
 
 
 async def admin_add_link(update, context):
-    """Thêm sản phẩm dạng LINK (không dùng TK/MK/email)."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         await safe_reply(update.message, "Khong co quyen.")
         return
@@ -2290,7 +2283,6 @@ async def admin_add_link(update, context):
         if not body:
             await safe_reply(update.message, "Thieu tham so.")
             return
-
         if "|" in body:
             name_part, rest = body.split("|", 1)
             name = name_part.strip()
@@ -2303,35 +2295,28 @@ async def admin_add_link(update, context):
             name = tokens0[0].strip()
             rest = tokens0[1]
             has_desc = False
-
         if not name:
             await safe_reply(update.message, "Thieu ten san pham.")
             return
-
         tokens = rest.strip().split()
         if not tokens:
             await safe_reply(update.message, "Thieu tham so.")
             return
-
         link_start_idx = -1
         for i, tok in enumerate(tokens):
             tl = tok.lower()
             if "http" in tl or "https" in tl or "t.me" in tl:
                 link_start_idx = i
                 break
-
         if link_start_idx == -1:
             await safe_reply(update.message, "Khong tim thay link. Cu phap: /addlink Ten Gia SL Link1,Link2")
             return
-
         if link_start_idx < 2:
             await safe_reply(update.message, "Thieu gia hoac so luong.")
             return
-
         stock_str = tokens[link_start_idx - 1]
         price_str = tokens[link_start_idx - 2]
         description = " ".join(tokens[:link_start_idx - 2]).strip() if has_desc else ""
-
         try:
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0:
@@ -2339,16 +2324,12 @@ async def admin_add_link(update, context):
         except ValueError:
             await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
             return
-
         links_str = " ".join(tokens[link_start_idx:])
         links = [k.strip() for k in re.split(r'[,\s]+', links_str) if k.strip()]
-
         if not links:
             await safe_reply(update.message, "Khong co link nao.")
             return
-
         stock = len(links)
-
         pid = add_product(name, description, price, stock, links,
                           emoji_id=None, requires_email=False, is_link=True)
         desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
@@ -2364,7 +2345,7 @@ async def admin_add_link(update, context):
                 context.bot,
                 {"name": name},
                 stock,
-                category="Sản phẩm mới (Link)"
+                category="San pham moi (Link)"
             ))
     except Exception as e:
         logger.error(f"addlink: {e}", exc_info=True)
@@ -2459,7 +2440,7 @@ async def admin_import_products(update, context):
             context.bot,
             {"name": names},
             total_qty,
-            category="Nhập hàng loạt"
+            category="Nhap hang loat"
         ))
 
 
@@ -2487,7 +2468,7 @@ async def admin_add_key(update, context):
             context.bot,
             {"name": p["name"]},
             len(new_keys),
-            category="Nhập thêm key"
+            category="Nhap them key"
         ))
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
@@ -2730,7 +2711,7 @@ async def admin_notify(update, context):
     except ValueError:
         await safe_reply(update.message, t_html(0, "notify_usage"))
         return
-    category = parts[3].strip() if len(parts) >= 4 else "Sản phẩm"
+    category = parts[3].strip() if len(parts) >= 4 else "San pham"
     p = get_product(pid)
     if not p:
         await safe_reply(update.message, t_html(0, "notify_not_found"))
@@ -2870,10 +2851,10 @@ async def admin_user_detail_cmd(update, context):
         return
     u = get_user_detail(target_id)
     if not u:
-        await safe_reply(update.message, f"Khong tim, thay user <code>{target_id}</code>.")
+        await safe_reply(update.message, f"Khong tim thay user <code>{target_id}</code>.")
         return
     username = u.get("username")
-    first = u.get("first_name") u in enumerate(users or ""
+    first = u.get("first_name") or ""
     last = u.get("last_name") or ""
     full_name = f"{first} {last}".strip() or "?"
     bal = int(u.get("balance", 0))
@@ -2881,11 +2862,11 @@ async def admin_user_detail_cmd(update, context):
     reg_str = reg.strftime("%Y-%m-%d %H:%M") if reg else "?"
     total_topup = get_total_topup_amount(target_id)
     rank, _ = get_user_topup_rank(target_id)
-    rank_str = f"#{rank}" if rank else "—"
+    rank_str = f"#{rank}" if rank else "-"
     topup_history = get_user_topup_orders(target_id, limit=10)
     text = (f"<b>{html.escape(t(0, 'admin_user_detail'))}</b>\n\n"
             f"- ID: <code>{target_id}</code>\n"
-            f"- Username: {('@' + html.escape(username)) if username else '—'}\n"
+            f"- Username: {('@' + html.escape(username)) if username else '-'}\n"
             f"- Ten: {html.escape(full_name)}\n"
             f"- Ngon ngu: <b>{u.get('lang', 'vi')}</b>\n"
             f"- Ngay DK: {reg_str}\n"
@@ -2930,7 +2911,7 @@ async def admin_topups(update, context):
     text = f"<b>{html.escape(t(0, 'admin_topups_title'))}</b>\n"
     text += f"Trang {page}/{(total - 1) // per_page + 1} - Tong: <b>{total}</b>\n\n"
     total_balance = 0
-    for i, 1):
+    for i, u in enumerate(users, 1):
         uid = u.get("user_id", "?")
         username = u.get("username")
         first = u.get("first_name") or ""
@@ -3432,29 +3413,14 @@ async def payos_webhook(request):
 # MAIN
 # ============================================================
 async def main():
-    logger.info("=== STARTUP BEGIN ===")
     logger.info(f"ADMIN_IDS loaded: {Config.ADMIN_IDS}")
     logger.info(f"BINANCE_AUTO_RATE: {Config.BINANCE_AUTO_RATE}")
-    logger.info(f"WEBHOOK_URL: {Config.WEBHOOK_URL or '(empty)'}")
-    sys.stdout.flush()
-
-    try:
-        init_db()
-        logger.info("init_db OK")
-    except Exception as e:
-        logger.error(f"init_db FAILED: {e}", exc_info=True)
-    sys.stdout.flush()
-
     app = Application.builder().token(Config.TELEGRAM_TOKEN).build()
-    logger.info("Application built OK")
-    sys.stdout.flush()
 
-    # User
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("lang", lang_cmd))
 
-    # Admin products
     app.add_handler(CommandHandler("add", admin_add_product))
     app.add_handler(CommandHandler("addlink", admin_add_link))
     app.add_handler(CommandHandler("addkey", admin_add_key))
@@ -3467,52 +3433,43 @@ async def main():
     app.add_handler(CommandHandler("del", admin_delete_product))
     app.add_handler(CommandHandler("delall", admin_delete_all))
 
-    # Admin binance
     app.add_handler(CommandHandler("setbinance", admin_setbinance))
     app.add_handler(CommandHandler("setrate", admin_setrate))
     app.add_handler(CommandHandler("viewbinance", admin_viewbinance))
     app.add_handler(CommandHandler("refreshrate", admin_refreshrate))
     app.add_handler(CommandHandler("confirm", admin_confirm_order))
 
-    # Admin config
     app.add_handler(CommandHandler("setconfig", admin_setconfig))
 
-    # Admin misc
     app.add_handler(CommandHandler("broadcast", admin_broadcast))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("notify", admin_notify))
     app.add_handler(CommandHandler("toggle_notify", admin_toggle_notify))
 
-    # Admin users
     app.add_handler(CommandHandler("users", admin_users))
     app.add_handler(CommandHandler("user", admin_user_detail_cmd))
     app.add_handler(CommandHandler("topups", admin_topups))
 
-    # Admin UI emoji
     app.add_handler(CommandHandler("setui", admin_setui))
     app.add_handler(CommandHandler("setui_force", admin_setui_force))
     app.add_handler(CommandHandler("viewui", admin_viewui))
     app.add_handler(CommandHandler("delui", admin_delui))
     app.add_handler(CommandHandler("testui", admin_testui))
 
-    # Admin texts
     app.add_handler(CommandHandler("settext", admin_settext))
     app.add_handler(CommandHandler("viewtext", admin_viewtext))
     app.add_handler(CommandHandler("deltext", admin_deltext))
 
     app.add_handler(CommandHandler("help", admin_help))
 
-    # Import .txt
     app.add_handler(MessageHandler(
         filters.Document.FileExtension("txt") & filters.User(Config.ADMIN_IDS),
         admin_import_products))
 
-    # Text handler (topup + email)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & ~filters.User(Config.ADMIN_IDS),
         handle_user_text))
 
-    # Callbacks
     app.add_handler(CallbackQueryHandler(noop_callback, pattern=r"^test_noop$"))
     app.add_handler(CallbackQueryHandler(menu_main_callback, pattern=r"^menu_main$"))
     app.add_handler(CallbackQueryHandler(menu_account_callback, pattern=r"^menu_account$"))
@@ -3551,22 +3508,13 @@ async def main():
     app.add_handler(CallbackQueryHandler(topup_check_callback, pattern=r"^topup_check_\d+$"))
     app.add_handler(CallbackQueryHandler(pay_wallet_callback, pattern=r"^pay_wallet_\d+$"))
 
-    logger.info("Handlers registered OK")
-    sys.stdout.flush()
-
     await app.initialize()
-    logger.info("app.initialize() OK")
-    sys.stdout.flush()
-
     await app.start()
-    logger.info("app.start() OK")
-    sys.stdout.flush()
 
     if Config.WEBHOOK_URL:
         wh_url = f"{Config.WEBHOOK_URL}/telegram"
         await app.bot.set_webhook(wh_url)
         logger.info(f"Webhook set: {wh_url}")
-        sys.stdout.flush()
 
     web_app = web.Application()
     web_app["bot_app"] = app
@@ -3582,37 +3530,20 @@ async def main():
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logger.info(f"=== SERVER STARTED PORT {port} ===")
-    sys.stdout.flush()
+    logger.info(f"Server started port {port}")
 
     try:
-        while True:
-            await asyncio.sleep(3600)
+        await asyncio.Event().wait()
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutdown signal received")
+        pass
     finally:
-        try:
-            await runner.cleanup()
-        except Exception as e:
-            logger.error(f"runner.cleanup: {e}")
-        try:
-            await app.stop()
-        except Exception as e:
-            logger.error(f"app.stop: {e}")
-        try:
-            await app.shutdown()
-        except Exception as e:
-            logger.error(f"app.shutdown: {e}")
+        await runner.cleanup()
+        await app.stop()
+        await app.shutdown()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Stopped by keyboard")
-    except Exception as e:
-        logger.error(f"FATAL: {e}")
-        logger.error(traceback.format_exc())
-        sys.stdout.flush()
-        sys.stderr.flush()
-        raise
+        logger.info("Stopped")
