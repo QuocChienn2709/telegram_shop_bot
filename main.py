@@ -2270,11 +2270,13 @@ async def admin_add_product(update, context):
 
 
 async def admin_add_link(update, context):
+    """Thêm sản phẩm dạng LINK (hỗ trợ custom emoji)."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         await safe_reply(update.message, "Khong co quyen.")
         return
     try:
-        clean, _ = extract_custom_emoji_from_message(update.message)
+        # Lấy emoji từ tin nhắn
+        clean, emoji_id = extract_custom_emoji_from_message(update.message)
         clean = re.sub(r'\s+\|', '|', clean).strip()
         if clean.lower().startswith("/addlink"):
             body = clean[8:].strip()
@@ -2283,6 +2285,8 @@ async def admin_add_link(update, context):
         if not body:
             await safe_reply(update.message, "Thieu tham so.")
             return
+
+        # Tách tên và phần còn lại
         if "|" in body:
             name_part, rest = body.split("|", 1)
             name = name_part.strip()
@@ -2295,28 +2299,37 @@ async def admin_add_link(update, context):
             name = tokens0[0].strip()
             rest = tokens0[1]
             has_desc = False
+
         if not name:
             await safe_reply(update.message, "Thieu ten san pham.")
             return
+
         tokens = rest.strip().split()
         if not tokens:
             await safe_reply(update.message, "Thieu tham so.")
             return
+
+        # Tìm vị trí bắt đầu của link (token chứa http/https/t.me)
         link_start_idx = -1
         for i, tok in enumerate(tokens):
             tl = tok.lower()
             if "http" in tl or "https" in tl or "t.me" in tl:
                 link_start_idx = i
                 break
+
         if link_start_idx == -1:
             await safe_reply(update.message, "Khong tim thay link. Cu phap: /addlink Ten Gia SL Link1,Link2")
             return
+
         if link_start_idx < 2:
             await safe_reply(update.message, "Thieu gia hoac so luong.")
             return
+
+        # Lấy stock, price từ các token ngay trước link
         stock_str = tokens[link_start_idx - 1]
         price_str = tokens[link_start_idx - 2]
         description = " ".join(tokens[:link_start_idx - 2]).strip() if has_desc else ""
+
         try:
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0:
@@ -2324,28 +2337,42 @@ async def admin_add_link(update, context):
         except ValueError:
             await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
             return
+
+        # Gộp các token còn lại thành chuỗi link, tách bằng dấu phẩy hoặc khoảng trắng
         links_str = " ".join(tokens[link_start_idx:])
         links = [k.strip() for k in re.split(r'[,\s]+', links_str) if k.strip()]
+
         if not links:
             await safe_reply(update.message, "Khong co link nao.")
             return
+
         stock = len(links)
+
+        # Validate emoji nếu có
+        emoji_note = ""
+        if emoji_id:
+            ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
+            if not ok:
+                emoji_note = "\nLuu y: Emoji khong hien thi duoc, van luu."
+
+        # Thêm sản phẩm với emoji
         pid = add_product(name, description, price, stock, links,
-                          emoji_id=None, requires_email=False, is_link=True)
+                          emoji_id=emoji_id, requires_email=False, is_link=True)
         desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
+        emoji_info = f"\nEmoji ID: <code>{emoji_id}</code>" if emoji_id else ""
         await safe_reply(update.message,
             f"Da them SP LINK ID <code>{pid}</code>\n"
             f"Ten: {html.escape(name)}{desc_info}\n"
             f"Gia: {price:,} VND\n"
             f"Ton kho: {stock}\n"
-            f"Links: {len(links)}\n\n"
+            f"Links: {len(links)}{emoji_info}{emoji_note}\n\n"
             f"<i>San pham se giao duoi dang LINK khi mua.</i>")
         if stock > 0:
             asyncio.create_task(broadcast_new_stock(
                 context.bot,
                 {"name": name},
                 stock,
-                category="San pham moi (Link)"
+                category="Sản phẩm mới (Link)"
             ))
     except Exception as e:
         logger.error(f"addlink: {e}", exc_info=True)
