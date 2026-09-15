@@ -91,7 +91,8 @@ def _invalidate_texts_cache():
 # ============================================================
 # PRODUCTS
 # ============================================================
-def add_product(name, description, price, stock, keys_list, emoji_id=None, requires_email=False):
+def add_product(name, description, price, stock, keys_list, emoji_id=None,
+                requires_email=False, is_link=False):
     db = _get_db()
     nid = _next_id("products")
     db.products.insert_one({
@@ -105,6 +106,7 @@ def add_product(name, description, price, stock, keys_list, emoji_id=None, requi
         "sold": 0,
         "emoji_id": emoji_id,
         "requires_email": bool(requires_email),
+        "is_link": bool(is_link),
         "created_at": datetime.utcnow(),
     })
     _invalidate_products_cache()
@@ -115,6 +117,14 @@ def set_product_requires_email(product_id, requires):
     _get_db().products.update_one(
         {"id": int(product_id)},
         {"$set": {"requires_email": bool(requires)}}
+    )
+    _invalidate_products_cache()
+
+
+def set_product_is_link(product_id, is_link):
+    _get_db().products.update_one(
+        {"id": int(product_id)},
+        {"$set": {"is_link": bool(is_link)}}
     )
     _invalidate_products_cache()
 
@@ -150,7 +160,7 @@ def list_products(limit=5, offset=0):
         cur = _get_db().products.find(
             {},
             {"id": 1, "name": 1, "price": 1, "stock": 1, "sold": 1,
-             "emoji_id": 1, "requires_email": 1}
+             "emoji_id": 1, "requires_email": 1, "is_link": 1}
         ).sort("id", ASCENDING).limit(200)
         _products_cache["data"] = [_normalize_product(d) for d in cur]
         _products_cache["ts"] = now
@@ -195,6 +205,7 @@ def _normalize_product(doc):
     d = dict(doc)
     d["keys"] = json.dumps(d.get("keys") or [])
     d.setdefault("requires_email", False)
+    d.setdefault("is_link", False)
     if "_id" in d and "id" not in d:
         d["id"] = d["_id"]
     return d
@@ -594,11 +605,12 @@ def get_usdt_rate():
 
 def set_usdt_rate(r):
     set_text("usdt_rate", str(int(r)))
+
+
 # ============================================================
-# HISTORY + RANK (NEW)
+# HISTORY + RANK
 # ============================================================
 def get_user_purchased_orders(user_id, limit=20):
-    """Lịch sử mua hàng đã thanh toán."""
     cur = _get_db().orders.find(
         {"user_id": int(user_id), "type": "product", "status": "paid"},
         {"order_code": 1, "product_id": 1, "amount": 1, "created_at": 1,
@@ -608,7 +620,6 @@ def get_user_purchased_orders(user_id, limit=20):
 
 
 def get_user_paid_topups(user_id, limit=20):
-    """Lịch sử nạp ví đã thanh toán."""
     cur = _get_db().orders.find(
         {"user_id": int(user_id), "type": "topup", "status": "paid"},
         {"order_code": 1, "amount": 1, "created_at": 1, "paid_at": 1,
@@ -618,7 +629,6 @@ def get_user_paid_topups(user_id, limit=20):
 
 
 def get_top_topup_users(limit=10):
-    """Top N user nạp nhiều nhất (tổng amount đã paid)."""
     pipeline = [
         {"$match": {"type": "topup", "status": "paid"}},
         {"$group": {"_id": "$user_id", "total": {"$sum": "$amount"}}},
@@ -647,7 +657,6 @@ def get_top_topup_users(limit=10):
 
 
 def get_user_topup_rank(user_id):
-    """Xếp hạng nạp của user (1-based). Trả về (rank, total) hoặc (None, 0)."""
     pipeline = [
         {"$match": {"type": "topup", "status": "paid"}},
         {"$group": {"_id": "$user_id", "total": {"$sum": "$amount"}}},
