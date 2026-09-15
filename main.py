@@ -21,7 +21,7 @@ from telegram.constants import ParseMode
 from config import Config
 from database import (
     init_db, add_product, delete_product, delete_all_products,
-    set_product_requires_email, decrement_stock,
+    set_product_requires_email, set_product_is_link, decrement_stock,
     get_product, list_products, count_products,
     list_all_products, count_all_products,
     get_available_key, create_order, get_order, update_order_status,
@@ -574,6 +574,19 @@ def format_key_display(key, lang="vi"):
     return f"<code>{html.escape(key)}</code>"
 
 
+def format_delivery_display(key, is_link=False, lang="vi"):
+    """Hiển thị nội dung giao hàng: link hay tài khoản."""
+    if not key:
+        return ""
+    if is_link:
+        safe_url = html.escape(key, quote=True)
+        safe_txt = html.escape(key)
+        return (f"🔗 <b>Link:</b>\n"
+                f'<a href="{safe_url}">▶ Nhấn để mở link</a>\n'
+                f"<code>{safe_txt}</code>")
+    return format_key_display(key, lang)
+
+
 def _user_display(info):
     if not info:
         return "?"
@@ -745,10 +758,12 @@ def product_buttons(products, page=0, per_page=5, uid=None):
     kb = []
     for p in products:
         stock = int(p.get("stock", 0))
+        is_link = bool(p.get("is_link"))
+        link_tag = " 🔗" if is_link else ""
         if stock > 0:
-            text = f"{p['name']} - {p['price']:,}đ - còn {stock}"
+            text = f"{p['name']}{link_tag} - {p['price']:,}đ - còn {stock}"
         else:
-            text = f"{t(uid, 'stock_out_tag')} {p['name']} - {p['price']:,}đ"
+            text = f"{t(uid, 'stock_out_tag')} {p['name']}{link_tag} - {p['price']:,}đ"
         kw = {"text": text, "callback_data": f"detail_{p['id']}"}
         if p.get("emoji_id"):
             kw["icon_custom_emoji_id"] = p["emoji_id"]
@@ -1014,8 +1029,9 @@ async def show_product_detail(update, context):
     desc_html = html.escape(desc_raw) if desc_raw else f"<i>{html.escape(t(uid, 'detail_no_desc'))}</i>"
     money_icon = ui_emoji_html("money")
     stock_html = str(stock) if stock > 0 else f"<b>{html.escape(t(uid, 'stock_out_tag'))}</b>"
+    link_badge = "  🔗 <i>Link</i>" if p.get("is_link") else ""
     text = (f"<b>{html.escape(t(uid, 'detail_title'))} #{p['id']}</b>\n\n"
-            f"<b>{html.escape(t(uid, 'detail_name'))}:</b> {name_html}\n"
+            f"<b>{html.escape(t(uid, 'detail_name'))}:</b> {name_html}{link_badge}\n"
             f"{money_icon} <b>{html.escape(t(uid, 'detail_price'))}:</b> {p['price']:,} VND\n"
             f"<b>{html.escape(t(uid, 'detail_stock'))}:</b> {stock_html}\n"
             f"<b>{html.escape(t(uid, 'detail_sold'))}:</b> {p['sold']}\n\n"
@@ -1205,6 +1221,7 @@ async def check_order(update, context):
         return
     product = get_product(order["product_id"])
     email_flow = bool(product and product.get("requires_email"))
+    is_link = bool(product and product.get("is_link"))
     if order["status"] == "cancelled":
         await safe_edit(query, t_html(uid, "order_cancelled"), reply_markup=None)
         return
@@ -1231,7 +1248,7 @@ async def check_order(update, context):
         await safe_edit(query,
             f"{t_html(uid, 'order_paid')}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-            f"{format_key_display(order['key_assigned'] or '', get_user_lang(uid))}",
+            f"{format_delivery_display(order['key_assigned'] or '', is_link, get_user_lang(uid))}",
             reply_markup=kb)
         return
     data = get_payment_status(order_code)
@@ -1250,7 +1267,7 @@ async def check_order(update, context):
                 await safe_edit(query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-                    f"{format_key_display(key, get_user_lang(uid))}",
+                    f"{format_delivery_display(key, is_link, get_user_lang(uid))}",
                     reply_markup=kb)
             else:
                 await safe_edit(query, t_html(uid, "order_no_key"), reply_markup=None)
@@ -1273,6 +1290,7 @@ async def cancel_order(update, context):
         return
     product = get_product(order["product_id"])
     email_flow = bool(product and product.get("requires_email"))
+    is_link = bool(product and product.get("is_link"))
     data = get_payment_status(order_code)
     paid = bool(data and data.get("code") == "00" and data.get("data", {}).get("status") == "PAID")
     if paid:
@@ -1289,7 +1307,7 @@ async def cancel_order(update, context):
                 await safe_edit(query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-                    f"{format_key_display(key, get_user_lang(uid))}",
+                    f"{format_delivery_display(key, is_link, get_user_lang(uid))}",
                     reply_markup=kb)
             else:
                 await safe_edit(query, t_html(uid, "order_no_key"), reply_markup=None)
@@ -1372,6 +1390,7 @@ async def delete_pending_order_callback(update, context):
     if paid:
         product = get_product(order["product_id"])
         email_flow = bool(product and product.get("requires_email"))
+        is_link = bool(product and product.get("is_link"))
         if email_flow:
             update_order_status(oc, "paid", None)
             set_order_email_status(oc, "awaiting")
@@ -1387,7 +1406,7 @@ async def delete_pending_order_callback(update, context):
                 await safe_edit(query,
                     f"{t_html(uid, 'order_success')}\n\n"
                     f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-                    f"{format_key_display(key, get_user_lang(uid))}",
+                    f"{format_delivery_display(key, is_link, get_user_lang(uid))}",
                     reply_markup=kb)
             else:
                 await query.answer(t(uid, "order_no_key"), show_alert=True)
@@ -1420,6 +1439,7 @@ async def recheck_cancelled_order_callback(update, context):
         return
     product = get_product(order["product_id"])
     email_flow = bool(product and product.get("requires_email"))
+    is_link = bool(product and product.get("is_link"))
     if email_flow:
         restore_cancelled_order(order_code)
         set_order_email_status(order_code, "awaiting")
@@ -1437,7 +1457,7 @@ async def recheck_cancelled_order_callback(update, context):
         await safe_edit(query,
             f"{t_html(uid, 'order_success')}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-            f"{format_key_display(key, get_user_lang(uid))}",
+            f"{format_delivery_display(key, is_link, get_user_lang(uid))}",
             reply_markup=kb)
 
 
@@ -1674,7 +1694,7 @@ async def wallet_callback(update, context):
 
 
 # ============================================================
-# TOPUP — CHỌN PHƯƠNG THỨC TRƯỚC
+# TOPUP
 # ============================================================
 async def topup_callback(update, context):
     query = update.callback_query
@@ -1983,6 +2003,7 @@ async def pay_wallet_callback(update, context):
         return
     product = get_product(order["product_id"])
     email_flow = bool(product and product.get("requires_email"))
+    is_link = bool(product and product.get("is_link"))
     if email_flow:
         update_order_status(order_code, "paid", None)
         set_order_email_status(order_code, "awaiting")
@@ -2003,7 +2024,7 @@ async def pay_wallet_callback(update, context):
         await safe_edit(query,
             f"{t_html(uid, 'wallet_paid_success', amount=order['amount'], balance=new_bal)}\n\n"
             f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
-            f"{format_key_display(key, get_user_lang(uid))}",
+            f"{format_delivery_display(key, is_link, get_user_lang(uid))}",
             reply_markup=kb)
 
 
@@ -2122,6 +2143,7 @@ async def confirm_binance_callback(update, context):
         return
     product = get_product(order["product_id"])
     email_flow = bool(product and product.get("requires_email"))
+    is_link = bool(product and product.get("is_link"))
     if email_flow:
         update_order_status(oc, "paid", None)
         set_order_email_status(oc, "awaiting")
@@ -2155,7 +2177,7 @@ async def confirm_binance_callback(update, context):
             await safe_send(context.bot, order["user_id"],
                 f"{t_html(order['user_id'], 'order_success')}\n\n"
                 f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
-                f"{format_key_display(key, lang)}")
+                f"{format_delivery_display(key, is_link, lang)}")
         except Exception as e:
             logger.error(f"notify: {e}")
 
@@ -2251,12 +2273,105 @@ async def admin_add_product(update, context):
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
 
+async def admin_add_link(update, context):
+    """Thêm sản phẩm dạng LINK (không dùng TK/MK/email)."""
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        await safe_reply(update.message, "Khong co quyen.")
+        return
+    try:
+        clean, emoji_id = extract_custom_emoji_from_message(update.message)
+        clean = re.sub(r'\s+\|', '|', clean).strip()
+        if clean.lower().startswith("/addlink"):
+            body = clean[8:].strip()
+        else:
+            body = clean
+        if not body:
+            await safe_reply(update.message, "Thieu tham so.")
+            return
+        if "|" in body:
+            name_part, rest = body.split("|", 1)
+            name = name_part.strip()
+            has_desc = True
+        else:
+            tokens0 = body.split(maxsplit=1)
+            if len(tokens0) < 2:
+                await safe_reply(update.message, "Thieu gia hoac so luong.")
+                return
+            name = tokens0[0].strip()
+            rest = tokens0[1]
+            has_desc = False
+        if not name:
+            await safe_reply(update.message, "Thieu ten san pham.")
+            return
+        tokens = rest.strip().split()
+        if not tokens:
+            await safe_reply(update.message, "Thieu tham so.")
+            return
+        if "," in tokens[-1]:
+            links_str = tokens[-1]
+            tokens = tokens[:-1]
+        else:
+            links_str = "-"
+        if len(tokens) < 2:
+            await safe_reply(update.message, "Thieu gia hoac so luong.")
+            return
+        stock_str = tokens[-1]
+        price_str = tokens[-2]
+        description = " ".join(tokens[:-2]).strip() if has_desc else ""
+        try:
+            price = int(price_str.replace(".", "").replace(",", "").strip())
+            if price <= 0:
+                raise ValueError()
+        except ValueError:
+            await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
+            return
+        links = []
+        if links_str.strip() and links_str.strip() != "-":
+            links = [k.strip() for k in links_str.split(",") if k.strip()]
+        if links:
+            stock = len(links)
+        else:
+            try:
+                stock = int(stock_str.strip())
+                if stock < 0:
+                    raise ValueError()
+            except ValueError:
+                await safe_reply(update.message, f"So luong loi: <code>{html.escape(stock_str)}</code>")
+                return
+        emoji_note = ""
+        if emoji_id:
+            ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
+            if not ok:
+                emoji_note = "\nLuu y: Emoji khong hien thi duoc, van luu."
+        pid = add_product(name, description, price, stock, links,
+                          emoji_id=emoji_id, requires_email=False, is_link=True)
+        desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
+        emoji_info = f"\nEmoji ID: <code>{emoji_id}</code>" if emoji_id else ""
+        await safe_reply(update.message,
+            f"🔗 <b>Da them SP LINK</b> ID <code>{pid}</code>\n"
+            f"Ten: {html.escape(name)}{desc_info}\n"
+            f"Gia: {price:,} VND\n"
+            f"Ton kho: {stock}\n"
+            f"Links: {len(links)}{emoji_info}{emoji_note}\n\n"
+            f"<i>San pham se giao duoi dang LINK khi mua.</i>")
+        if stock > 0:
+            asyncio.create_task(broadcast_new_stock(
+                context.bot,
+                {"name": name},
+                stock,
+                category="Sản phẩm mới (Link)"
+            ))
+    except Exception as e:
+        logger.error(f"addlink: {e}", exc_info=True)
+        await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
+
+
 async def admin_setflow(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     parts = update.message.text.split()
     if len(parts) < 3:
-        await safe_reply(update.message, "Cu phap: <code>/setflow &lt;id&gt; &lt;email|key&gt;</code>")
+        await safe_reply(update.message, "Cu phap: <code>/setflow &lt;id&gt; &lt;email|key|link&gt;</code>")
         return
     try:
         pid = int(parts[1])
@@ -2264,14 +2379,22 @@ async def admin_setflow(update, context):
         await safe_reply(update.message, "ID khong hop le.")
         return
     flow = parts[2].lower()
-    if flow not in ("email", "key"):
-        await safe_reply(update.message, "Flow phai la email hoac key.")
+    if flow not in ("email", "key", "link"):
+        await safe_reply(update.message, "Flow phai la email, key hoac link.")
         return
     p = get_product(pid)
     if not p:
         await safe_reply(update.message, f"Khong tim thay SP <code>{pid}</code>.")
         return
-    set_product_requires_email(pid, flow == "email")
+    if flow == "link":
+        set_product_is_link(pid, True)
+        set_product_requires_email(pid, False)
+    elif flow == "email":
+        set_product_is_link(pid, False)
+        set_product_requires_email(pid, True)
+    else:
+        set_product_is_link(pid, False)
+        set_product_requires_email(pid, False)
     await safe_reply(update.message, f"SP <code>{pid}</code> ({html.escape(p['name'])}): flow = <b>{flow}</b>")
 
 
@@ -2427,14 +2550,19 @@ async def admin_detail(update, context):
         name_html = product_name_html(p["name"], p.get("emoji_id"))
         desc = html.escape(p.get("description") or "(khong co mo ta)")
         keys = json.loads(p["keys"] or "[]")
-        flow = "email" if p.get("requires_email") else "key"
+        if p.get("is_link"):
+            flow = "link"
+        elif p.get("requires_email"):
+            flow = "email"
+        else:
+            flow = "key"
         text = (f"<b>SP #{p['id']}</b>\nTen: {name_html}\nMo ta: {desc}\n"
                 f"Gia: {p['price']:,} VND\nKho: {p['stock']}\nBan: {p['sold']}\n"
                 f"Flow: <b>{flow}</b>\n"
                 f"Emoji ID: <code>{p.get('emoji_id') or 'chua dat'}</code>\n\n"
                 f"<b>Keys ({len(keys)}):</b>\n")
         for i, k in enumerate(keys[:10], 1):
-            text += f"  {i}. {format_key_display(k)}\n"
+            text += f"  {i}. {format_delivery_display(k, p.get('is_link'))}\n"
         if len(keys) > 10:
             text += f"  <i>... va {len(keys) - 10} key khac</i>\n"
         await safe_reply(update.message, text)
@@ -2452,7 +2580,12 @@ async def admin_list_products(update, context):
     products = list_all_products(limit=20, offset=0)
     text = f"<b>SP ({len(products)}/{total}):</b>\n\n"
     for p in products:
-        flow = "email" if p.get("requires_email") else "key"
+        if p.get("is_link"):
+            flow = "link"
+        elif p.get("requires_email"):
+            flow = "email"
+        else:
+            flow = "key"
         text += f"<code>{p['id']}</code> [{flow}] {html.escape(p['name'])[:28]} - {p['price']:,}d - kho:{p['stock']}\n"
     if total > 20:
         text += f"\n<i>... {total - 20} SP khac</i> <code>/list2</code>"
@@ -2469,7 +2602,12 @@ async def admin_list2(update, context):
         return
     text = f"<b>Trang 2/{(total - 1) // 20 + 1}:</b>\n\n"
     for p in products:
-        flow = "email" if p.get("requires_email") else "key"
+        if p.get("is_link"):
+            flow = "link"
+        elif p.get("requires_email"):
+            flow = "email"
+        else:
+            flow = "key"
         text += f"<code>{p['id']}</code> [{flow}] {html.escape(p['name'])[:28]} - {p['price']:,}d\n"
     await safe_reply(update.message, text)
 
@@ -2522,6 +2660,7 @@ async def admin_confirm_order(update, context):
             return
         product = get_product(order["product_id"])
         email_flow = bool(product and product.get("requires_email"))
+        is_link = bool(product and product.get("is_link"))
         if email_flow:
             update_order_status(oc, "paid", None)
             set_order_email_status(oc, "awaiting")
@@ -2544,7 +2683,7 @@ async def admin_confirm_order(update, context):
                 await safe_send(context.bot, order["user_id"],
                     f"{t_html(order['user_id'], 'order_success')}\n\n"
                     f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
-                    f"{format_key_display(key, lang)}")
+                    f"{format_delivery_display(key, is_link, lang)}")
             except Exception as e:
                 logger.error(f"notify: {e}")
     except Exception as e:
@@ -2566,7 +2705,7 @@ async def admin_broadcast(update, context):
             await safe_send(context.bot, uid, msg, disable_web_page_preview=True)
             sent += 1
             await asyncio.sleep(0.05)
-        except Exception as e:
+        except Exception:
             fail += 1
     await safe_reply(update.message, f"Broadcast xong. OK {sent} | FAIL {fail}")
 
@@ -3120,7 +3259,9 @@ async def admin_help(update, context):
         txt = ("<b>Admin commands:</b>\n\n"
                "<code>/add Ten Gia SL [Keys]</code>\n"
                "<code>/add Ten|Mo_ta Gia SL [Keys]</code>\n"
-               "<code>/setflow &lt;id&gt; email|key</code>\n"
+               "<code>/addlink Ten Gia SL [Link1,Link2]</code>\n"
+               "<code>/addlink Ten|Mo_ta Gia SL [Link1,Link2]</code>\n"
+               "<code>/setflow &lt;id&gt; email|key|link</code>\n"
                "<code>/addkey &lt;id&gt; K1,K2</code>\n"
                "<code>/setdesc &lt;id&gt; Mo ta</code>\n"
                "<code>/setemoji &lt;id&gt; [emoji]</code>\n"
@@ -3228,6 +3369,7 @@ async def payos_webhook(request):
             if order["status"] == "pending":
                 product = get_product(order["product_id"])
                 email_flow = bool(product and product.get("requires_email"))
+                is_link = bool(product and product.get("is_link"))
                 if email_flow:
                     update_order_status(oc, "paid", None)
                     set_order_email_status(oc, "awaiting")
@@ -3246,13 +3388,14 @@ async def payos_webhook(request):
                             await safe_send(app.bot, order["user_id"],
                                 f"{t_html(order['user_id'], 'order_success')}\n\n"
                                 f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
-                                f"{format_key_display(key, lang)}")
+                                f"{format_delivery_display(key, is_link, lang)}")
                         except Exception as e:
                             logger.error(f"notify: {e}")
             elif order["status"] == "cancelled":
                 logger.info(f"Late webhook for cancelled order {oc} - restoring")
                 product = get_product(order["product_id"])
                 email_flow = bool(product and product.get("requires_email"))
+                is_link = bool(product and product.get("is_link"))
                 if email_flow:
                     restore_cancelled_order(oc)
                     set_order_email_status(oc, "awaiting")
@@ -3271,7 +3414,7 @@ async def payos_webhook(request):
                             await safe_send(app.bot, order["user_id"],
                                 f"{t_html(order['user_id'], 'order_success')}\n\n"
                                 f"<b>{html.escape(t(order['user_id'], 'account_info'))}:</b>\n"
-                                f"{format_key_display(key, lang)}")
+                                f"{format_delivery_display(key, is_link, lang)}")
                         except Exception as e:
                             logger.error(f"notify: {e}")
         return Response(text="OK", status=200)
@@ -3293,6 +3436,7 @@ async def main():
     app.add_handler(CommandHandler("lang", lang_cmd))
 
     app.add_handler(CommandHandler("add", admin_add_product))
+    app.add_handler(CommandHandler("addlink", admin_add_link))
     app.add_handler(CommandHandler("addkey", admin_add_key))
     app.add_handler(CommandHandler("setemoji", admin_set_product_emoji))
     app.add_handler(CommandHandler("setdesc", admin_setdesc))
