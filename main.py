@@ -821,6 +821,69 @@ def email_confirm_buttons(order_code, uid=None):
 
 
 # ============================================================
+# BROADCAST (FIXED - LOCK + COOLDOWN + CHECK TRONG LOOP)
+# ============================================================
+_last_broadcast_ts = 0
+BROADCAST_COOLDOWN = 30
+_broadcast_lock = asyncio.Lock()
+
+
+async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
+    """Gửi thông báo tới toàn bộ user - CHỈ 1 TASK CHẠY 1 LÚC."""
+    global _last_broadcast_ts
+
+    if get_text("auto_broadcast", "true").strip().lower() != "true":
+        logger.info("broadcast_new_stock: auto_broadcast OFF, skip")
+        return 0, 0
+
+    now = time.time()
+    if now - _last_broadcast_ts < BROADCAST_COOLDOWN:
+        left = int(BROADCAST_COOLDOWN - (now - _last_broadcast_ts))
+        logger.info(f"broadcast_new_stock: cooldown active ({left}s left), SKIP")
+        return 0, 0
+
+    if _broadcast_lock.locked():
+        logger.info("broadcast_new_stock: another broadcast running, SKIP")
+        return 0, 0
+
+    async with _broadcast_lock:
+        if get_text("auto_broadcast", "true").strip().lower() != "true":
+            return 0, 0
+        now = time.time()
+        if now - _last_broadcast_ts < BROADCAST_COOLDOWN:
+            return 0, 0
+        _last_broadcast_ts = now
+
+        users = get_all_user_ids()
+        if not users:
+            return 0, 0
+
+        prod_name = (product or {}).get("name") or "?"
+        title_prefix = text_emoji_html("notify_title")
+        title = t(0, "notify_title")
+        line = t(0, "notify_line")
+        body_raw = t(0, "notify_body", category=category, product=prod_name, qty=added_qty)
+        body_prefix = text_emoji_html("notify_body")
+        msg = (f"{title_prefix}<b>{html.escape(title)}</b>\n"
+               f"{html.escape(line)}\n"
+               f"{body_prefix}{html.escape(body_raw)}")
+
+        sent, fail = 0, 0
+        for uid in users:
+            if get_text("auto_broadcast", "true").strip().lower() != "true":
+                logger.info(f"broadcast_new_stock: stopped mid-loop (auto OFF) sent={sent}")
+                break
+            try:
+                await safe_send(bot, uid, msg)
+                sent += 1
+                await asyncio.sleep(0.05)
+            except Exception:
+                fail += 1
+        logger.info(f"broadcast_new_stock: product={prod_name} qty={added_qty} sent={sent} fail={fail}")
+        return sent, fail
+
+
+# ============================================================
 # HELPERS
 # ============================================================
 async def _notify_admin_email_request(bot, order, email, tg_user=None):
@@ -872,34 +935,6 @@ async def check_email_block(query, uid):
             pass
         return True
     return False
-
-
-async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
-    if get_text("auto_broadcast", "true").strip().lower() != "true":
-        logger.info("broadcast_new_stock: auto_broadcast OFF, skip")
-        return 0, 0
-    users = get_all_user_ids()
-    if not users:
-        return 0, 0
-    prod_name = (product or {}).get("name") or "?"
-    title_prefix = text_emoji_html("notify_title")
-    title = t(0, "notify_title")
-    line = t(0, "notify_line")
-    body_raw = t(0, "notify_body", category=category, product=prod_name, qty=added_qty)
-    body_prefix = text_emoji_html("notify_body")
-    msg = (f"{title_prefix}<b>{html.escape(title)}</b>\n"
-           f"{html.escape(line)}\n"
-           f"{body_prefix}{html.escape(body_raw)}")
-    sent, fail = 0, 0
-    for uid in users:
-        try:
-            await safe_send(bot, uid, msg)
-            sent += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            fail += 1
-    logger.info(f"broadcast_new_stock: product={prod_name} qty={added_qty} sent={sent} fail={fail}")
-    return sent, fail
 
 
 # ============================================================
@@ -1162,10 +1197,10 @@ async def binance_sent_callback(update, context):
                   f"• Order: <code>{order_code}</code>\n"
                   f"• User: {html.escape(user_info)} (<code>{uid}</code>)\n"
                   f"• SP: {html.escape(p['name']) if p else '?'}\n"
-                  f"• Số tiền: <b>{order['amount']:,} VND</b> ≈ <b>{usdt} USDT</b>\n"
+                  f"• Số tiền: <b>{order['amount']:,} VND</b> = <b>{usdt} USDT</b>\n"
                   f"• Rate: <code>{rate:,.0f}</code> ({html.escape(rate_source)})\n"
                   f"• Memo: <code>DH{order_code}</code>\n\n"
-                  f"Kiểm tra Binance → nếu đã nhận USDT → bấm nút dưới.")
+                  f"Kiểm tra Binance - nếu đã nhận USDT - bấm nút dưới.")
     kb = InlineKeyboardMarkup([
         [button(t(0, "admin_received_key"), callback_data=f"cfbinance_{order_code}", ui_key="admin_recv_key")],
         [button(t(0, "admin_cancel_order"), callback_data=f"cancel_{order_code}", ui_key="admin_cancel")],
@@ -2257,7 +2292,8 @@ async def admin_add_product(update, context):
             f"Ton kho: {stock}\n"
             f"Keys: {len(keys)}{emoji_info}{emoji_note}\n\n"
             f"<i>Bat email flow: <code>/setflow {pid} email</code></i>")
-        if stock > 0:
+        # CHỈ TẠO TASK KHI CỜ AUTO BẬT
+        if stock > 0 and get_text("auto_broadcast", "true").strip().lower() == "true":
             asyncio.create_task(broadcast_new_stock(
                 context.bot,
                 {"name": name},
@@ -2275,7 +2311,6 @@ async def admin_add_link(update, context):
         await safe_reply(update.message, "Khong co quyen.")
         return
     try:
-        # Lấy emoji từ tin nhắn
         clean, emoji_id = extract_custom_emoji_from_message(update.message)
         clean = re.sub(r'\s+\|', '|', clean).strip()
         if clean.lower().startswith("/addlink"):
@@ -2285,8 +2320,6 @@ async def admin_add_link(update, context):
         if not body:
             await safe_reply(update.message, "Thieu tham so.")
             return
-
-        # Tách tên và phần còn lại
         if "|" in body:
             name_part, rest = body.split("|", 1)
             name = name_part.strip()
@@ -2299,37 +2332,28 @@ async def admin_add_link(update, context):
             name = tokens0[0].strip()
             rest = tokens0[1]
             has_desc = False
-
         if not name:
             await safe_reply(update.message, "Thieu ten san pham.")
             return
-
         tokens = rest.strip().split()
         if not tokens:
             await safe_reply(update.message, "Thieu tham so.")
             return
-
-        # Tìm vị trí bắt đầu của link (token chứa http/https/t.me)
         link_start_idx = -1
         for i, tok in enumerate(tokens):
             tl = tok.lower()
             if "http" in tl or "https" in tl or "t.me" in tl:
                 link_start_idx = i
                 break
-
         if link_start_idx == -1:
             await safe_reply(update.message, "Khong tim thay link. Cu phap: /addlink Ten Gia SL Link1,Link2")
             return
-
         if link_start_idx < 2:
             await safe_reply(update.message, "Thieu gia hoac so luong.")
             return
-
-        # Lấy stock, price từ các token ngay trước link
         stock_str = tokens[link_start_idx - 1]
         price_str = tokens[link_start_idx - 2]
         description = " ".join(tokens[:link_start_idx - 2]).strip() if has_desc else ""
-
         try:
             price = int(price_str.replace(".", "").replace(",", "").strip())
             if price <= 0:
@@ -2337,25 +2361,17 @@ async def admin_add_link(update, context):
         except ValueError:
             await safe_reply(update.message, f"Gia loi: <code>{html.escape(price_str)}</code>")
             return
-
-        # Gộp các token còn lại thành chuỗi link, tách bằng dấu phẩy hoặc khoảng trắng
         links_str = " ".join(tokens[link_start_idx:])
         links = [k.strip() for k in re.split(r'[,\s]+', links_str) if k.strip()]
-
         if not links:
             await safe_reply(update.message, "Khong co link nao.")
             return
-
         stock = len(links)
-
-        # Validate emoji nếu có
         emoji_note = ""
         if emoji_id:
             ok = await validate_custom_emoji(context.bot, update.effective_user.id, emoji_id)
             if not ok:
                 emoji_note = "\nLuu y: Emoji khong hien thi duoc, van luu."
-
-        # Thêm sản phẩm với emoji
         pid = add_product(name, description, price, stock, links,
                           emoji_id=emoji_id, requires_email=False, is_link=True)
         desc_info = f"\nMo ta: {html.escape(description)}" if description else ""
@@ -2367,12 +2383,13 @@ async def admin_add_link(update, context):
             f"Ton kho: {stock}\n"
             f"Links: {len(links)}{emoji_info}{emoji_note}\n\n"
             f"<i>San pham se giao duoi dang LINK khi mua.</i>")
-        if stock > 0:
+        # CHỈ TẠO TASK KHI CỜ AUTO BẬT
+        if stock > 0 and get_text("auto_broadcast", "true").strip().lower() == "true":
             asyncio.create_task(broadcast_new_stock(
                 context.bot,
                 {"name": name},
                 stock,
-                category="Sản phẩm mới (Link)"
+                category="San pham moi (Link)"
             ))
     except Exception as e:
         logger.error(f"addlink: {e}", exc_info=True)
@@ -2458,7 +2475,8 @@ async def admin_import_products(update, context):
         for ln, err in fail[:10]:
             rpt += f"Dong {ln}: {html.escape(err)}\n"
     await safe_reply(update.message, rpt)
-    if ok:
+    # CHỈ TẠO TASK KHI CỜ AUTO BẬT
+    if ok and get_text("auto_broadcast", "true").strip().lower() == "true":
         total_qty = sum(x[3] for x in ok)
         names = ", ".join(x[1] for x in ok[:3])
         if len(ok) > 3:
@@ -2491,12 +2509,14 @@ async def admin_add_key(update, context):
         get_db().products.update_one({"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}})
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
-        asyncio.create_task(broadcast_new_stock(
-            context.bot,
-            {"name": p["name"]},
-            len(new_keys),
-            category="Nhap them key"
-        ))
+        # CHỈ TẠO TASK KHI CỜ AUTO BẬT
+        if get_text("auto_broadcast", "true").strip().lower() == "true":
+            asyncio.create_task(broadcast_new_stock(
+                context.bot,
+                {"name": p["name"]},
+                len(new_keys),
+                category="Nhap them key"
+            ))
     except Exception as e:
         await safe_reply(update.message, f"Loi: {html.escape(str(e))}")
 
@@ -2775,6 +2795,37 @@ async def admin_toggle_notify(update, context):
     set_text("auto_broadcast", new)
     key = "notify_toggled_on" if new == "true" else "notify_toggled_off"
     await safe_reply(update.message, t_html(0, key))
+
+
+async def admin_stop_broadcast(update, context):
+    """Dừng khẩn cấp mọi broadcast đang chạy."""
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    set_text("auto_broadcast", "false")
+    global _last_broadcast_ts
+    _last_broadcast_ts = 0
+    await safe_reply(update.message,
+        "Da DUNG KHAN CAP moi broadcast.\n\n"
+        "Moi task dang chay se tu dung o vong lap ke tiep.\n"
+        "Bat lai bang: /toggle_notify")
+
+
+async def admin_broadcast_status(update, context):
+    if update.effective_user.id not in Config.ADMIN_IDS:
+        return
+    cur = get_text("auto_broadcast", "true").strip().lower()
+    state = "BAT" if cur == "true" else "TAT"
+    lock_state = "DANG CHAY" if _broadcast_lock.locked() else "RANH"
+    now = time.time()
+    cd_left = max(0, int(BROADCAST_COOLDOWN - (now - _last_broadcast_ts)))
+    total_users = count_users()
+    await safe_reply(update.message,
+        f"<b>Trang thai broadcast</b>\n\n"
+        f"- Auto: <b>{state}</b>\n"
+        f"- Lock: <b>{lock_state}</b>\n"
+        f"- Cooldown: <b>{cd_left}s</b>\n"
+        f"- Tong users: <code>{total_users}</code>\n"
+        f"- Thoi gian gui uoc tinh: <code>{int(total_users * 0.05)}s</code>")
 
 
 # ============================================================
@@ -3301,7 +3352,9 @@ async def admin_help(update, context):
                "<code>/viewtext</code> / <code>/deltext</code>\n\n"
                "<b>Thong bao:</b>\n"
                "<code>/notify &lt;id&gt; &lt;qty&gt; [danh_muc]</code>\n"
-               "<code>/toggle_notify</code>\n\n"
+               "<code>/toggle_notify</code>\n"
+               "<code>/stopbroadcast</code> - Dung khan cap\n"
+               "<code>/broadcast_status</code> - Kiem tra trang thai\n\n"
                "<b>Khac:</b>\n"
                "<code>/broadcast &lt;msg&gt;</code> / <code>/stats</code>")
         await safe_reply(update.message, txt)
@@ -3472,6 +3525,8 @@ async def main():
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("notify", admin_notify))
     app.add_handler(CommandHandler("toggle_notify", admin_toggle_notify))
+    app.add_handler(CommandHandler("stopbroadcast", admin_stop_broadcast))
+    app.add_handler(CommandHandler("broadcast_status", admin_broadcast_status))
 
     app.add_handler(CommandHandler("users", admin_users))
     app.add_handler(CommandHandler("user", admin_user_detail_cmd))
