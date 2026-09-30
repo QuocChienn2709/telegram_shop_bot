@@ -286,8 +286,7 @@ def get_awaiting_email_order(user_id):
         },
         sort=[("created_at", DESCENDING)]
     )
-return _normalize_order(doc) if doc else None
-    _ None
+    return _normalize_order(doc) if doc else None
 
 
 def get_pending_orders_by_user(user_id):
@@ -344,7 +343,8 @@ def _normalize_order(doc):
 # ============================================================
 # USERS
 # ============================================================
-def register_user(user_id, username=None, first_name=None, last_name=Noneget_db().users.update_one(
+def register_user(user_id, username=None, first_name=None, last_name=None):
+    _get_db().users.update_one(
         {"user_id": int(user_id)},
         {
             "$set": {
@@ -554,13 +554,16 @@ def get_text(key, default=""):
     if now - _texts_cache["ts"] > CACHE_TTL_TEXTS:
         _load_texts_cache()
     v = _texts_cache["data"].get(key)
-    return v if v is not None else default
+    if v is not None:
+        return v
+    return default
 
 
 def get_text_fresh(key, default=""):
-    """Đọc text KHÔNG cache - dùng cho kill switch auto_broadcast."""
     doc = _get_db().texts.find_one({"key": key}, {"value": 1, "_id": 0})
-    return doc.get("value") if doc else default
+    if doc:
+        return doc.get("value", default)
+    return default
 
 
 def set_text(key, value):
@@ -626,14 +629,15 @@ def get_user_purchased_orders(user_id, limit=20):
 
 
 def get_user_purchased_order_detail(user_id, order_code):
-    """Lấy chi tiết 1 đơn đã mua - chỉ trả về nếu user sở hữu."""
     doc = _get_db().orders.find_one(
         {"order_code": int(order_code), "user_id": int(user_id),
          "type": "product", "status": "paid"},
         {"order_code": 1, "product_id": 1, "amount": 1, "created_at": 1,
          "paid_at": 1, "key_assigned": 1, "_id": 0}
     )
-    return dict(doc) if doc else None
+    if doc:
+        return dict(doc)
+    return None
 
 
 def get_user_paid_topups(user_id, limit=20):
