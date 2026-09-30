@@ -36,11 +36,12 @@ from database import (
     list_users_with_topup, count_users_with_topup,
     get_user_topup_orders, get_total_topup_amount,
     get_setting, set_setting, delete_setting, get_all_settings,
-    get_text, set_text, delete_text, get_all_texts,
+    get_text, get_text_fresh, set_text, delete_text, get_all_texts,
     get_binance_address, set_binance_address,
     get_binance_network, set_binance_network,
     get_usdt_rate, set_usdt_rate,
     get_user_purchased_orders, get_user_paid_topups,
+    get_user_purchased_order_detail,
     get_top_topup_users, get_user_topup_rank,
 )
 from payos_client import create_payment_link, verify_payment_webhook, get_payment_status
@@ -289,6 +290,10 @@ DEFAULT_TEXTS = {
         "topup_title": "NẠP TIỀN",
         "topup_payos_ask": "Nạp qua PayOS (VND)",
         "topup_binance_ask": "Nạp qua Binance (USDT)",
+        "btn_view_account": "Xem TK",
+        "purchase_detail_title": "CHI TIẾT ĐƠN HÀNG",
+        "purchase_paid_at": "Ngày thanh toán",
+        "purchase_no_account": "(Chưa có tài khoản giao cho đơn này)",
         "setconfig_usage": "Cú pháp:\n<code>/setconfig channel @your_channel</code>\n<code>/setconfig admin @your_admin</code>",
         "setconfig_channel_ok": "Đã đặt kênh thông báo: {value}",
         "setconfig_admin_ok": "Đã đặt admin: {value}",
@@ -436,6 +441,10 @@ DEFAULT_TEXTS = {
         "topup_title": "TOP UP",
         "topup_payos_ask": "Top up via PayOS (VND)",
         "topup_binance_ask": "Top up via Binance (USDT)",
+        "btn_view_account": "View account",
+        "purchase_detail_title": "ORDER DETAIL",
+        "purchase_paid_at": "Paid at",
+        "purchase_no_account": "(No account assigned for this order)",
         "setconfig_usage": "Usage:\n<code>/setconfig channel @your_channel</code>\n<code>/setconfig admin @your_admin</code>",
         "setconfig_channel_ok": "Channel set: {value}",
         "setconfig_admin_ok": "Admin set: {value}",
@@ -491,6 +500,7 @@ TEXT_EMOJI_KEYS = {
     "topup_history_title": "Tiêu đề lịch sử nạp",
     "top_topup_title": "Tiêu đề top nạp",
     "topup_title": "Tiêu đề nạp tiền",
+    "purchase_detail_title": "Tiêu đề chi tiết đơn",
 }
 
 
@@ -637,6 +647,7 @@ UI_KEYS = {
     "top_topup_btn": "Nút Top nạp tiền",
     "language_menu_btn": "Nút Ngôn ngữ (menu chính)",
     "menu_main_btn": "Nút Menu chính (quay về)",
+    "view_account_btn": "Nút 'Xem TK' (lịch sử mua)",
 }
 
 
@@ -821,7 +832,7 @@ def email_confirm_buttons(order_code, uid=None):
 
 
 # ============================================================
-# BROADCAST (FIXED - LOCK + COOLDOWN + CHECK TRONG LOOP)
+# BROADCAST (FIXED - LOCK + COOLDOWN + CHECK FRESH)
 # ============================================================
 _last_broadcast_ts = 0
 BROADCAST_COOLDOWN = 30
@@ -832,8 +843,8 @@ async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
     """Gửi thông báo tới toàn bộ user - CHỈ 1 TASK CHẠY 1 LÚC."""
     global _last_broadcast_ts
 
-    if get_text("auto_broadcast", "true").strip().lower() != "true":
-        logger.info("broadcast_new_stock: auto_broadcast OFF, skip")
+    if get_text_fresh("auto_broadcast", "false").strip().lower() != "true":
+        logger.info("broadcast_new_stock: auto_broadcast OFF (fresh check), skip")
         return 0, 0
 
     now = time.time()
@@ -847,7 +858,7 @@ async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
         return 0, 0
 
     async with _broadcast_lock:
-        if get_text("auto_broadcast", "true").strip().lower() != "true":
+        if get_text_fresh("auto_broadcast", "false").strip().lower() != "true":
             return 0, 0
         now = time.time()
         if now - _last_broadcast_ts < BROADCAST_COOLDOWN:
@@ -870,8 +881,8 @@ async def broadcast_new_stock(bot, product, added_qty, category="Sản phẩm"):
 
         sent, fail = 0, 0
         for uid in users:
-            if get_text("auto_broadcast", "true").strip().lower() != "true":
-                logger.info(f"broadcast_new_stock: stopped mid-loop (auto OFF) sent={sent}")
+            if get_text_fresh("auto_broadcast", "false").strip().lower() != "true":
+                logger.info(f"broadcast_new_stock: stopped mid-loop (fresh check) sent={sent}")
                 break
             try:
                 await safe_send(bot, uid, msg)
@@ -1553,7 +1564,7 @@ async def menu_account_callback(update, context):
 
 
 # ============================================================
-# PURCHASE HISTORY
+# PURCHASE HISTORY + ACCOUNT DETAIL
 # ============================================================
 async def menu_purchase_callback(update, context):
     query = update.callback_query
@@ -1564,27 +1575,44 @@ async def menu_purchase_callback(update, context):
     orders = get_user_purchased_orders(uid, limit=20)
     title_prefix = text_emoji_html("purchase_history_title")
     title = t(uid, "purchase_history_title")
+
     if not orders:
         text = f"{title_prefix}<b>{title}</b>\n\n<i>{html.escape(t(uid, 'purchase_history_empty'))}</i>"
-    else:
-        product_ids = list({o["product_id"] for o in orders})
-        products_map = {}
-        for doc in get_db().products.find({"id": {"$in": product_ids}},
-                                          {"id": 1, "name": 1, "emoji_id": 1}):
-            products_map[doc["id"]] = doc
-        lines = [f"{title_prefix}<b>{title}</b>\n"]
-        for i, o in enumerate(orders, 1):
-            p = products_map.get(o["product_id"])
-            name = product_name_html(p["name"], p.get("emoji_id")) if p else f"SP #{o['product_id']}"
-            dt = o.get("paid_at") or o.get("created_at")
-            dt_str = dt.strftime("%d/%m/%Y %H:%M") if dt else "?"
-            lines.append(t(uid, "purchase_history_item",
-                           idx=i, code=o["order_code"], product=name,
-                           amount=f"{o['amount']:,}", date=dt_str))
-        text = "\n".join(lines)
-    kb = InlineKeyboardMarkup([
-        [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
-    ])
+        kb = InlineKeyboardMarkup([
+            [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
+        ])
+        await safe_edit(query, text, reply_markup=kb)
+        return
+
+    # Lấy tên sản phẩm
+    product_ids = list({o["product_id"] for o in orders})
+    products_map = {}
+    for doc in get_db().products.find({"id": {"$in": product_ids}},
+                                      {"id": 1, "name": 1, "emoji_id": 1}):
+        products_map[doc["id"]] = doc
+
+    # Build text + nút
+    text_lines = [f"{title_prefix}<b>{title}</b>\n"]
+    kb_rows = []
+    for i, o in enumerate(orders, 1):
+        p = products_map.get(o["product_id"])
+        name = product_name_html(p["name"], p.get("emoji_id")) if p else f"SP #{o['product_id']}"
+        dt = o.get("paid_at") or o.get("created_at")
+        dt_str = dt.strftime("%d/%m/%Y %H:%M") if dt else "?"
+        text_lines.append(t(uid, "purchase_history_item",
+                            idx=i, code=o["order_code"], product=name,
+                            amount=f"{o['amount']:,}", date=dt_str))
+        short_code = str(o["order_code"])[-6:]
+        kb_rows.append([button(
+            f"{t(uid, 'btn_view_account')} #{short_code}",
+            callback_data=f"pacc_{o['order_code']}",
+            ui_key="view_account_btn"
+        )])
+
+    text = "\n".join(text_lines)
+    kb_rows.append([button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")])
+    kb = InlineKeyboardMarkup(kb_rows)
+
     if len(text) > 3800:
         parts = []
         buf = ""
@@ -1598,9 +1626,52 @@ async def menu_purchase_callback(update, context):
         await safe_edit(query, parts[0])
         for p in parts[1:]:
             await safe_send(context.bot, query.message.chat_id, p)
-        await safe_send(context.bot, query.message.chat_id, t_html(uid, "menu_choose"), reply_markup=kb)
+        await safe_send(context.bot, query.message.chat_id,
+                        f"<i>{html.escape(t(uid, 'menu_choose'))}</i>",
+                        reply_markup=kb)
     else:
         await safe_edit(query, text, reply_markup=kb)
+
+
+async def purchase_account_detail_callback(update, context):
+    """Xem tài khoản/link đã mua cho 1 đơn cụ thể."""
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    try:
+        order_code = int(query.data.split("_")[1])
+    except (ValueError, IndexError):
+        await query.answer("Loi du lieu", show_alert=True)
+        return
+
+    order = get_user_purchased_order_detail(uid, order_code)
+    if not order:
+        await query.answer("Khong tim thay don hoac ban khong so huu.", show_alert=True)
+        return
+
+    product = get_product(order["product_id"])
+    is_link = bool(product and product.get("is_link"))
+    pname = product_name_html(product["name"], product.get("emoji_id")) if product else f"SP #{order['product_id']}"
+    dt = order.get("paid_at") or order.get("created_at")
+    dt_str = dt.strftime("%d/%m/%Y %H:%M") if dt else "?"
+
+    key = order.get("key_assigned") or ""
+    delivery = format_delivery_display(key, is_link, get_user_lang(uid))
+    if not delivery:
+        delivery = f"<i>{html.escape(t(uid, 'purchase_no_account'))}</i>"
+
+    text = (f"<b>{html.escape(t(uid, 'purchase_detail_title'))} #{order_code}</b>\n\n"
+            f"<b>{html.escape(t(uid, 'order_product'))}:</b> {pname}\n"
+            f"<b>{html.escape(t(uid, 'order_amount'))}:</b> {order['amount']:,} VND\n"
+            f"<b>{html.escape(t(uid, 'purchase_paid_at'))}:</b> {dt_str}\n\n"
+            f"<b>{html.escape(t(uid, 'account_info'))}:</b>\n"
+            f"{delivery}")
+
+    kb = InlineKeyboardMarkup([
+        [button(t(uid, "btn_back"), callback_data="menu_purchase", ui_key="back")],
+        [button(t(uid, "btn_menu_main"), callback_data="menu_main", ui_key="menu_main_btn")],
+    ])
+    await safe_edit(query, text, reply_markup=kb, disable_web_page_preview=True)
 
 
 # ============================================================
@@ -2292,8 +2363,7 @@ async def admin_add_product(update, context):
             f"Ton kho: {stock}\n"
             f"Keys: {len(keys)}{emoji_info}{emoji_note}\n\n"
             f"<i>Bat email flow: <code>/setflow {pid} email</code></i>")
-        # CHỈ TẠO TASK KHI CỜ AUTO BẬT
-        if stock > 0 and get_text("auto_broadcast", "true").strip().lower() == "true":
+        if stock > 0 and get_text_fresh("auto_broadcast", "false").strip().lower() == "true":
             asyncio.create_task(broadcast_new_stock(
                 context.bot,
                 {"name": name},
@@ -2383,8 +2453,7 @@ async def admin_add_link(update, context):
             f"Ton kho: {stock}\n"
             f"Links: {len(links)}{emoji_info}{emoji_note}\n\n"
             f"<i>San pham se giao duoi dang LINK khi mua.</i>")
-        # CHỈ TẠO TASK KHI CỜ AUTO BẬT
-        if stock > 0 and get_text("auto_broadcast", "true").strip().lower() == "true":
+        if stock > 0 and get_text_fresh("auto_broadcast", "false").strip().lower() == "true":
             asyncio.create_task(broadcast_new_stock(
                 context.bot,
                 {"name": name},
@@ -2475,8 +2544,7 @@ async def admin_import_products(update, context):
         for ln, err in fail[:10]:
             rpt += f"Dong {ln}: {html.escape(err)}\n"
     await safe_reply(update.message, rpt)
-    # CHỈ TẠO TASK KHI CỜ AUTO BẬT
-    if ok and get_text("auto_broadcast", "true").strip().lower() == "true":
+    if ok and get_text_fresh("auto_broadcast", "false").strip().lower() == "true":
         total_qty = sum(x[3] for x in ok)
         names = ", ".join(x[1] for x in ok[:3])
         if len(ok) > 3:
@@ -2509,8 +2577,7 @@ async def admin_add_key(update, context):
         get_db().products.update_one({"id": pid},
             {"$push": {"keys": {"$each": new_keys}}, "$inc": {"stock": len(new_keys)}})
         await safe_reply(update.message, f"Da them {len(new_keys)} key. Ton moi: {p['stock'] + len(new_keys)}")
-        # CHỈ TẠO TASK KHI CỜ AUTO BẬT
-        if get_text("auto_broadcast", "true").strip().lower() == "true":
+        if get_text_fresh("auto_broadcast", "false").strip().lower() == "true":
             asyncio.create_task(broadcast_new_stock(
                 context.bot,
                 {"name": p["name"]},
@@ -2790,7 +2857,7 @@ async def admin_notify(update, context):
 async def admin_toggle_notify(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
-    cur = get_text("auto_broadcast", "true").strip().lower()
+    cur = get_text_fresh("auto_broadcast", "false").strip().lower()
     new = "false" if cur == "true" else "true"
     set_text("auto_broadcast", new)
     key = "notify_toggled_on" if new == "true" else "notify_toggled_off"
@@ -2798,7 +2865,6 @@ async def admin_toggle_notify(update, context):
 
 
 async def admin_stop_broadcast(update, context):
-    """Dừng khẩn cấp mọi broadcast đang chạy."""
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     set_text("auto_broadcast", "false")
@@ -2813,7 +2879,7 @@ async def admin_stop_broadcast(update, context):
 async def admin_broadcast_status(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
-    cur = get_text("auto_broadcast", "true").strip().lower()
+    cur = get_text_fresh("auto_broadcast", "false").strip().lower()
     state = "BAT" if cur == "true" else "TAT"
     lock_state = "DANG CHAY" if _broadcast_lock.locked() else "RANH"
     now = time.time()
@@ -2821,7 +2887,7 @@ async def admin_broadcast_status(update, context):
     total_users = count_users()
     await safe_reply(update.message,
         f"<b>Trang thai broadcast</b>\n\n"
-        f"- Auto: <b>{state}</b>\n"
+        f"- Auto: <b>{state}</b> (fresh from DB)\n"
         f"- Lock: <b>{lock_state}</b>\n"
         f"- Cooldown: <b>{cd_left}s</b>\n"
         f"- Tong users: <code>{total_users}</code>\n"
@@ -3172,6 +3238,7 @@ TEXT_KEYS_INFO = {
     "topup_history_title": "Tieu de lich su nap",
     "top_topup_title": "Tieu de top nap",
     "topup_title": "Tieu de nap tien",
+    "purchase_detail_title": "Tieu de chi tiet don hang",
     "purchase_history_item": "Item lich su mua ({idx}, {code}, {product}, {amount}, {date})",
     "topup_history_item": "Item lich su nap ({idx}, {code}, {amount}, {method}, {date})",
     "top_topup_item": "Item top nap ({medal}, {user}, {amount})",
@@ -3303,7 +3370,7 @@ async def admin_stats(update, context):
     if update.effective_user.id not in Config.ADMIN_IDS:
         return
     live, src, _ = get_binance_rate_live()
-    auto_state = "BAT" if get_text("auto_broadcast", "true").strip().lower() == "true" else "TAT"
+    auto_state = "BAT" if get_text_fresh("auto_broadcast", "false").strip().lower() == "true" else "TAT"
     cur_ch = get_text("channel_link", "@your_channel") or "@your_channel"
     cur_ad = get_text("admin_link", "@your_admin") or "@your_admin"
     await safe_reply(update.message,
@@ -3556,6 +3623,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(menu_main_callback, pattern=r"^menu_main$"))
     app.add_handler(CallbackQueryHandler(menu_account_callback, pattern=r"^menu_account$"))
     app.add_handler(CallbackQueryHandler(menu_purchase_callback, pattern=r"^menu_purchase$"))
+    app.add_handler(CallbackQueryHandler(purchase_account_detail_callback, pattern=r"^pacc_\d+$"))
     app.add_handler(CallbackQueryHandler(menu_topup_history_callback, pattern=r"^menu_topup_history$"))
     app.add_handler(CallbackQueryHandler(menu_top_topup_callback, pattern=r"^menu_top_topup$"))
     app.add_handler(CallbackQueryHandler(confirm_send_email_callback, pattern=r"^cfmsend_\d+$"))
