@@ -286,7 +286,7 @@ def get_awaiting_email_order(user_id):
         },
         sort=[("created_at", DESCENDING)]
     )
-    return _normalize_order(doc) if doc else):
+return _normalize_order(doc) if doc else None
     _ None
 
 
